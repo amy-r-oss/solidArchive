@@ -22,33 +22,51 @@ jobs:
 
       - name: Create archive directory
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/evidence"
+          mkdir -p "$GITHUB_WORKSPACE/archive"
 
       - name: Run ArchiveBox
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE/evidence:/data" \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
 
           docker run --rm \
-            -v "$GITHUB_WORKSPACE/evidence:/data" \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             add "${{ inputs.url }}"
 
+      - name: Install WACZerciser
+        run: |
+          python3 -m pip install waczerciser
+
+      - name: Create WACZ
+        run: |
+          waczerciser create archive archive.wacz --as-files
+
       - name: Show result
         run: |
-          find evidence -maxdepth 4 -type f | sort
-
-      - name: Diagnose archive
+          find archive -maxdepth 4 -type f | sort
+          
+      - name: List output
         run: |
-          du -sh evidence
-          find evidence -type f | head -100
-          echo "ERRORS:"
-          cat evidence/logs/errors.log || true
+          ls -lh archive.wacz
+          find archive -type f | head -50
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: archive
+          path: archive.wacz
+      # - name: Diagnose archive
+      #   run: |
+      #     du -sh archive
+      #     find archive -type f | head -100
+      #     echo "ERRORS:"
+      #     cat archive/logs/errors.log || true
           
       - name: Upload test output
         uses: actions/upload-artifact@v4
         with:
           name: archive-test-output
-          path: evidence/
+          path: archive/
