@@ -30,6 +30,10 @@ jobs:
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             config --set SAVE_MEDIA=True
+
+      - name: Test yt-dlp
+        run: |
+          docker run --rm my-archivebox yt-dlp --version
             
       - name: Run ArchiveBox
         run: |
@@ -64,6 +68,10 @@ jobs:
       - name: Show result
         run: |
           find archive -maxdepth 4 -type f | sort
+
+      - name: Show media errors
+        run: |
+          grep -RniE "yt-dlp|youtube|media.*failed|ERROR" archive/logs archive/archive 2>/dev/null | tail -100 || true
           
       - name: List output
         run: |
