@@ -35,14 +35,24 @@ jobs:
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             add "${{ inputs.url }}"
-
-      - name: Install WACZerciser
+        
+      - name: Install WACZ
         run: |
-          python3 -m pip install waczerciser
-
+          python3 -m pip install wacz
+      
+      - name: Find WARC files
+        run: |
+          find archive -type f \( -name "*.warc" -o -name "*.warc.gz" \) -print
+      
       - name: Create WACZ
         run: |
-          waczerciser create archive archive.wacz --as-files
+          WARC=$(find archive -type f \( -name "*.warc" -o -name "*.warc.gz" \) | head -n 1)
+          echo "Using WARC: $WARC"
+          wacz create "$WARC" -o archive.wacz --detect-pages
+      
+      - name: Check WACZ
+        run: |
+          ls -lh archive.wacz
 
       - name: Show result
         run: |
