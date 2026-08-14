@@ -1,0 +1,47 @@
+name: Test Archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL to archive"
+        required: true
+        type: string
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this exact fork/commit
+        uses: actions/checkout@v4
+
+      - name: Build ArchiveBox from this source
+        run: |
+          docker build -t my-archivebox .
+
+      - name: Create archive directory
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/evidence"
+
+      - name: Run ArchiveBox
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/evidence:/data" \
+            my-archivebox \
+            init --install
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/evidence:/data" \
+            my-archivebox \
+            add "${{ inputs.url }}"
+
+      - name: Show result
+        run: |
+          find evidence -maxdepth 4 -type f | sort
+
+      - name: Upload test output
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-test-output
+          path: evidence/
