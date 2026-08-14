@@ -40,14 +40,14 @@ jobs:
         run: |
           find evidence -maxdepth 4 -type f | sort
 
-      - name: Diagnose archive
-        run: |
-          du -sh evidence
-          find evidence -type f | head -100
-          echo "ERRORS:"
-          cat evidence/logs/errors.log || true
-            - name: Upload test output
-              uses: actions/upload-artifact@v4
-              with:
-                name: archive-test-output
-                path: evidence/
+      # - name: Diagnose archive
+      #   run: |
+      #     du -sh evidence
+      #     find evidence -type f | head -100
+      #     echo "ERRORS:"
+      #     cat evidence/logs/errors.log || true
+      #       - name: Upload test output
+      #         uses: actions/upload-artifact@v4
+      #         with:
+      #           name: archive-test-output
+      #           path: evidence/
