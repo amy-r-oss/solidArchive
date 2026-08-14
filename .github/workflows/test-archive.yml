@@ -19,28 +19,20 @@ jobs:
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
-
-      - name: Create archive directory
+          
+      - name: Create archive
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
-          
-      - name: Configure media capture
-        run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            config --set SAVE_MEDIA=True
 
-      - name: Test yt-dlp
-        run: |
-          docker run --rm my-archivebox yt-dlp --version
-            
-      - name: Run ArchiveBox
-        run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            config --set SAVE_MEDIA=True
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
