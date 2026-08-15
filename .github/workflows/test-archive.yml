@@ -20,24 +20,30 @@ jobs:
         run: |
           docker build -t my-archivebox .
           
-      - name: Create archive
+      - name: Test YouTube with yt-dlp
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/archive"
+          python3 -m pip install -U yt-dlp
+          yt-dlp --version
+          yt-dlp --list-formats "${{ inputs.url }}"
+          
+      # - name: Create archive
+      #   run: |
+      #     mkdir -p "$GITHUB_WORKSPACE/archive"
 
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            init
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       my-archivebox \
+      #       init
 
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            install
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       my-archivebox \
+      #       install
 
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            add "${{ inputs.url }}"
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       my-archivebox \
+      #       add "${{ inputs.url }}"
             
         
       - name: Install WACZ
