@@ -24,7 +24,7 @@ jobs:
         run: |
           python3 -m pip install -U yt-dlp
           yt-dlp --version
-          yt-dlp --list-formats "${{ inputs.url }}"
+          yt-dlp --js-runtimes node --list-formats "${{ inputs.url }}"
           
       # - name: Create archive
       #   run: |
