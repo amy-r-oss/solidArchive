@@ -29,7 +29,8 @@ jobs:
             my-archivebox \
             init --install
 
-          docker run --rm \
+            docker run --rm \
+            -e YTDLP_ENABLED=true \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             add "${{ inputs.url }}"
@@ -73,6 +74,18 @@ jobs:
           echo "=== yt-dlp logs ==="
           grep -RniE "yt-dlp|YTDLP|youtube" archive/logs 2>/dev/null | tail -100 || true
 
+
+      - name: Test yt-dlp
+        run: |
+          docker run --rm --entrypoint /bin/bash my-archivebox -lc '
+            which yt-dlp || true
+            yt-dlp --version || true
+            which ffmpeg || true
+            ffmpeg -version | head -1 || true
+            which node || true
+            node --version || true
+          '
+          
       - name: Upload archive
         uses: actions/upload-artifact@v7
         with:
