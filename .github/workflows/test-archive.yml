@@ -32,11 +32,6 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            config --set SAVE_MEDIA=True
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
             add "${{ inputs.url }}"
         
       - name: Install WACZ
