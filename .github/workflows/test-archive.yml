@@ -65,9 +65,13 @@ jobs:
           ls -lh archive.wacz
           find archive -type f | head -50
           
-      - name: Find downloaded media
+      - name: Check YouTube capture
         run: |
-          find archive -type f \( -name "*.mp4" -o -name "*.webm" -o -name "*.mkv" \) -print
+          echo "=== Media files ==="
+          find archive -type f \( -name "*.mp4" -o -name "*.webm" -o -name "*.mkv" -o -name "*.m4a" \) -print
+
+          echo "=== yt-dlp logs ==="
+          grep -RniE "yt-dlp|YTDLP|youtube" archive/logs 2>/dev/null | tail -100 || true
 
       - name: Upload archive
         uses: actions/upload-artifact@v7
