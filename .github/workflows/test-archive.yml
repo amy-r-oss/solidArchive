@@ -29,39 +29,39 @@ jobs:
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
           
-      - name: Test YouTube cookies
-        env:
-          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
-        run: |
-          printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
-
-          python3 -m pip install -U yt-dlp
-
-          yt-dlp \
-            --cookies "$RUNNER_TEMP/cookies.txt" \
-            --js-runtimes node \
-            --remote-components ejs:github \
-            --list-formats \
-            "${{ inputs.url }}"
-          
-      # - name: Create archive
+      # - name: Test YouTube cookies
+      #   env:
+      #     YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
       #   run: |
-      #     mkdir -p "$GITHUB_WORKSPACE/archive"
+      #     printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
 
-      #     docker run --rm \
-      #       -v "$GITHUB_WORKSPACE/archive:/data" \
-      #       my-archivebox \
-      #       init
+      #     python3 -m pip install -U yt-dlp
 
-      #     docker run --rm \
-      #       -v "$GITHUB_WORKSPACE/archive:/data" \
-      #       my-archivebox \
-      #       install
+      #     yt-dlp \
+      #       --cookies "$RUNNER_TEMP/cookies.txt" \
+      #       --js-runtimes node \
+      #       --remote-components ejs:github \
+      #       --list-formats \
+      #       "${{ inputs.url }}"
+          
+      - name: Create archive
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/archive"
 
-      #     docker run --rm \
-      #       -v "$GITHUB_WORKSPACE/archive:/data" \
-      #       my-archivebox \
-      #       add "${{ inputs.url }}"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            init
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            install
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            add "${{ inputs.url }}"
             
         
       - name: Install WACZ
@@ -103,17 +103,16 @@ jobs:
           echo "=== yt-dlp logs ==="
           grep -RniE "yt-dlp|YTDLP|youtube" archive/logs 2>/dev/null | tail -100 || true
 
-
-      - name: Test yt-dlp
-        run: |
-          docker run --rm --entrypoint /bin/bash my-archivebox -lc '
-            which yt-dlp || true
-            yt-dlp --version || true
-            which ffmpeg || true
-            ffmpeg -version | head -1 || true
-            which node || true
-            node --version || true
-          '
+      # - name: Test yt-dlp
+      #   run: |
+      #     docker run --rm --entrypoint /bin/bash my-archivebox -lc '
+      #       which yt-dlp || true
+      #       yt-dlp --version || true
+      #       which ffmpeg || true
+      #       ffmpeg -version | head -1 || true
+      #       which node || true
+      #       node --version || true
+      #     '
           
       - name: Upload archive
         uses: actions/upload-artifact@v7
