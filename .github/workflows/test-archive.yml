@@ -13,23 +13,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test ArchiveBox install
-        run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            init
-      
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            install
-      
-          docker run --rm \
-            --entrypoint /bin/bash \
-            my-archivebox \
-            -lc 'which yt-dlp || true; find / -name yt-dlp -type f 2>/dev/null | head -20'
-        
       - name: Checkout this exact fork/commit
         uses: actions/checkout@v4
 
@@ -44,13 +27,18 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            init --install
+            init
 
-            docker run --rm \
-            -e YTDLP_ENABLED=true \
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            install
+
+          docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             add "${{ inputs.url }}"
+            
         
       - name: Install WACZ
         run: |
