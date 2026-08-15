@@ -19,12 +19,29 @@ jobs:
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
+
           
-      - name: Test YouTube with yt-dlp
+      - name: Create temporary YouTube cookies
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
+          printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
+          chmod 600 "$RUNNER_TEMP/cookies.txt"
+
+          
+      - name: Test YouTube cookies
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
+
           python3 -m pip install -U yt-dlp
-          yt-dlp --version
-          yt-dlp --js-runtimes node --list-formats "${{ inputs.url }}"
+
+          yt-dlp \
+            --cookies "$RUNNER_TEMP/cookies.txt" \
+            --js-runtimes node \
+            --list-formats \
+            "${{ inputs.url }}"
           
       # - name: Create archive
       #   run: |
