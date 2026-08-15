@@ -20,7 +20,6 @@ jobs:
         run: |
           docker build -t my-archivebox .
 
-          
       - name: Create temporary YouTube cookies
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
@@ -28,22 +27,6 @@ jobs:
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
-          
-      # - name: Test YouTube cookies
-      #   env:
-      #     YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
-      #   run: |
-      #     printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
-
-      #     python3 -m pip install -U yt-dlp
-
-      #     yt-dlp \
-      #       --cookies "$RUNNER_TEMP/cookies.txt" \
-      #       --js-runtimes node \
-      #       --remote-components ejs:github \
-      #       --list-formats \
-      #       "${{ inputs.url }}"
-          
       - name: Create archive
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
@@ -55,78 +38,75 @@ jobs:
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            install
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            -e YTDLP_ENABLED=true \
+            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
             my-archivebox \
             add "${{ inputs.url }}"
-            
-        
+
+      - name: Remove temporary cookies
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cookies.txt"
+
+      - name: Check YouTube capture
+        run: |
+          echo "=== Media files ==="
+          find archive -type f \( \
+            -name "*.mp4" -o \
+            -name "*.webm" -o \
+            -name "*.mkv" -o \
+            -name "*.m4a" \
+          \) -print
+
+          echo "=== yt-dlp / YouTube logs ==="
+          grep -RniE "yt-dlp|YTDLP|youtube" archive/logs 2>/dev/null | tail -100 || true
+
+      - name: Show result
+        run: |
+          echo "=== Archive size ==="
+          du -sh archive
+
+          echo "=== Archive files ==="
+          find archive -maxdepth 5 -type f | sort | head -200
+
+      - name: Show media errors
+        run: |
+          grep -RniE "yt-dlp|youtube|media.*failed|ERROR" \
+            archive/logs archive/archive 2>/dev/null | tail -100 || true
+
       - name: Install WACZ
         run: |
           python3 -m pip install wacz
-      
+
       - name: Find WARC files
         run: |
           find archive -type f \( -name "*.warc" -o -name "*.warc.gz" \) -print
-      
+
       - name: Create WACZ
         run: |
           WARC=$(find archive -type f \( -name "*.warc" -o -name "*.warc.gz" \) | head -n 1)
+
+          if [ -z "$WARC" ]; then
+            echo "ERROR: No WARC file found"
+            exit 1
+          fi
+
           echo "Using WARC: $WARC"
           wacz create "$WARC" -o archive.wacz --detect-pages
-      
+
       - name: Check WACZ
         run: |
           ls -lh archive.wacz
 
-      - name: Show result
-        run: |
-          find archive -maxdepth 4 -type f | sort
-
-      - name: Show media errors
-        run: |
-          grep -RniE "yt-dlp|youtube|media.*failed|ERROR" archive/logs archive/archive 2>/dev/null | tail -100 || true
-          
-      - name: List output
-        run: |
-          ls -lh archive.wacz
-          find archive -type f | head -50
-          
-      - name: Check YouTube capture
-        run: |
-          echo "=== Media files ==="
-          find archive -type f \( -name "*.mp4" -o -name "*.webm" -o -name "*.mkv" -o -name "*.m4a" \) -print
-
-          echo "=== yt-dlp logs ==="
-          grep -RniE "yt-dlp|YTDLP|youtube" archive/logs 2>/dev/null | tail -100 || true
-
-      # - name: Test yt-dlp
-      #   run: |
-      #     docker run --rm --entrypoint /bin/bash my-archivebox -lc '
-      #       which yt-dlp || true
-      #       yt-dlp --version || true
-      #       which ffmpeg || true
-      #       ffmpeg -version | head -1 || true
-      #       which node || true
-      #       node --version || true
-      #     '
-          
-      - name: Upload archive
-        uses: actions/upload-artifact@v7
+      - name: Upload WACZ
+        uses: actions/upload-artifact@v4
         with:
           name: archive
           path: archive.wacz
-      # - name: Diagnose archive
-      #   run: |
-      #     du -sh archive
-      #     find archive -type f | head -100
-      #     echo "ERRORS:"
-      #     cat archive/logs/errors.log || true
-          
-      - name: Upload test output
+
+      - name: Upload complete ArchiveBox output
         uses: actions/upload-artifact@v4
         with:
           name: archive-test-output
