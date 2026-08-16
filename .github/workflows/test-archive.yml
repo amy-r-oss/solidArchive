@@ -119,15 +119,13 @@ jobs:
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
-            -e URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
-            -e PUBLIC_INDEX="True" \
+            -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
             my-archivebox \
             list --html --with-headers > archive/index.html
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
-            -e URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
-            -e PUBLIC_INDEX="True" \
+            -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
             my-archivebox \
             list --json --with-headers > archive/index.json
 
