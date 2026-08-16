@@ -112,7 +112,7 @@ jobs:
             archive/logs 2>/dev/null | tail -200 || true
 
 
-# Generate ArchiveBox's static index for the GitHub Pages viewer.
+      # Generate ArchiveBox's static index for the GitHub Pages viewer.
       - name: Create static ArchiveBox index
         run: |
           docker run --rm \
