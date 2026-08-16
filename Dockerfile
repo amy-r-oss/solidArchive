@@ -269,3 +269,7 @@ HEALTHCHECK --interval=30s --timeout=20s --retries=15 \
 
 ENTRYPOINT ["dumb-init", "--", "/app/bin/docker_entrypoint.sh"]
 CMD ["archivebox", "server", "--init", "0.0.0.0:8000"]
+
+# My edit to add "install yt-dlp" as done by archiveBox installed dependencies aren't persistent between containers
+# Install yt-dlp into the ArchiveBox image so every container can use it.
+RUN python3 -m pip install --no-cache-dir --upgrade yt-dlp
