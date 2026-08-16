@@ -32,32 +32,17 @@ jobs:
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
 
-      - name: Diagnose ArchiveBox yt-dlp
+      - name: Test yt-dlp inside ArchiveBox container
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/archive"
-
           docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            init
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            -e YTDLP_ENABLED=true \
-            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
             my-archivebox \
-            config --search yt-dlp
-
-          echo "=== YTDLP COOKIES ==="
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            -e YTDLP_ENABLED=true \
-            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-            my-archivebox \
-            config --get YTDLP_COOKIES_FILE
+            yt-dlp \
+            --cookies /tmp/cookies.txt \
+            --js-runtimes node \
+            --remote-components ejs:github \
+            --list-formats \
+            "${{ inputs.url }}"
       # - name: Create archive
       #   run: |
       #     mkdir -p "$GITHUB_WORKSPACE/archive"
