@@ -131,16 +131,35 @@ jobs:
           path: archive/
 
 
+      # Create a separate, static copy for GitHub Pages.
+      # The original ArchiveBox directory remains untouched.
+      - name: Prepare Pages site
+        run: |
+          rm -rf pages
+          mkdir -p pages
+
+          # ArchiveBox's generated viewer.
+          cp archive/index.html pages/index.html
+          cp archive/index.json pages/index.json
+
+          # Copy the captured snapshots/media.
+          cp -a archive/archive pages/archive
+
+          echo "=== Pages contents ==="
+          du -sh pages
+          find pages -type f | head -100
+
+
       # Prepare GitHub Pages.
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
 
-      # Upload the ArchiveBox directory as the static Pages site.
+      # Upload ONLY the static viewing copy.
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: archive/
+          path: pages/
 
 
       # Deploy the static ArchiveBox viewer.
