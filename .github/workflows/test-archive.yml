@@ -12,6 +12,7 @@ jobs:
   archive:
     runs-on: ubuntu-latest
 
+    # Allow this workflow to deploy the static viewer to GitHub Pages.
     permissions:
       contents: read
       pages: write
@@ -19,19 +20,19 @@ jobs:
 
     steps:
 
-      # Get the exact ArchiveBox fork/commit being tested.
+      # Get the exact fork/commit being tested.
       - name: Checkout source
         uses: actions/checkout@v4
 
 
-      # Build your fork with yt-dlp installed in the image.
+      # Build your ArchiveBox fork, including yt-dlp + EJS.
       - name: Build ArchiveBox image
         run: |
           docker build -t my-archivebox .
 
 
-      # Re-create the temporary YouTube authentication file.
-      # This file is NEVER put into archive/ or GitHub artifacts.
+      # Create a temporary YouTube authentication file.
+      # It is kept outside the archive and never uploaded as an artifact.
       - name: Create temporary YouTube cookies
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
@@ -40,18 +41,22 @@ jobs:
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
 
-      # Initialize ArchiveBox and archive the requested URL.
-      # yt-dlp, Node and FFmpeg are available inside the image.
-      # The YouTube cookies are mounted read-only.
-      - name: Create ArchiveBox archive
+      # Initialize ArchiveBox AND install all documented runtime dependencies.
+      # This is the official ArchiveBox workflow: init followed by install.
+      - name: Initialize and install ArchiveBox
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            init
+            init --install
 
+
+      # Archive the requested URL.
+      # The YouTube cookies are mounted read-only and are used only during this run.
+      - name: Archive URL
+        run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
@@ -62,14 +67,14 @@ jobs:
             add "${{ inputs.url }}"
 
 
-      # Remove authentication credentials immediately after archiving.
+      # Remove the authentication credential immediately after archiving.
       - name: Remove temporary cookies
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/cookies.txt"
 
 
-      # Show whether ArchiveBox actually downloaded the media.
+      # Check whether the actual video/audio was captured.
       - name: Check captured media
         run: |
           echo "=== MEDIA FILES ==="
@@ -87,7 +92,7 @@ jobs:
             archive/logs 2>/dev/null | tail -100 || true
 
 
-      # Show the original ArchiveBox output.
+      # Show the complete ArchiveBox output without changing it.
       - name: Show archive
         run: |
           echo "=== ARCHIVE SIZE ==="
@@ -97,15 +102,15 @@ jobs:
           find archive -type f | sort | head -300
 
 
-      # Show any extractor errors without making the job fail.
-      - name: Show errors
+      # Show extractor errors for diagnosis.
+      - name: Show archive errors
         run: |
           grep -RniE "ERROR|failed|yt-dlp|youtube" \
             archive/logs 2>/dev/null | tail -200 || true
 
 
-      # Create a static ArchiveBox index for GitHub Pages.
-      - name: Create ArchiveBox static index
+      # Generate ArchiveBox's static index for the GitHub Pages viewer.
+      - name: Create static ArchiveBox index
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
@@ -118,7 +123,7 @@ jobs:
             list --json --with-headers > archive/index.json
 
 
-      # Preserve the COMPLETE ORIGINAL ArchiveBox output.
+      # Upload the COMPLETE original ArchiveBox directory as a GitHub artifact.
       - name: Upload complete ArchiveBox output
         uses: actions/upload-artifact@v4
         with:
@@ -131,7 +136,7 @@ jobs:
         uses: actions/configure-pages@v5
 
 
-      # Publish the ArchiveBox folder as a static viewing copy.
+      # Upload the ArchiveBox directory as the static Pages site.
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
