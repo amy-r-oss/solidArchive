@@ -112,34 +112,23 @@ jobs:
             archive/logs 2>/dev/null | tail -200 || true
 
 
-      # Create a static viewer that does not depend on archivebox.localhost.
-      - name: Create static ArchiveBox viewer
+# Generate ArchiveBox's static index for the GitHub Pages viewer.
+      - name: Create static ArchiveBox index
         run: |
-          mkdir -p pages
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -e URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
+            -e PUBLIC_INDEX="True" \
+            my-archivebox \
+            list --html --with-headers > archive/index.html
 
-          # Copy the captured archive unchanged.
-          cp -a archive/archive pages/archive
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -e URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
+            -e PUBLIC_INDEX="True" \
+            my-archivebox \
+            list --json --with-headers > archive/index.json
 
-          # Create a simple static index linking directly to the
-          # captured ArchiveBox snapshots.
-          cat > pages/index.html <<'EOF'
-          <!doctype html>
-          <html>
-          <head>
-            <meta charset="utf-8">
-            <title>ArchiveBox Archive</title>
-            <style>
-              body { font-family: sans-serif; margin: 40px; }
-              a { display: block; margin: 10px 0; }
-            </style>
-          </head>
-          <body>
-            <h1>ArchiveBox Archive</h1>
-            <p>Captured snapshots:</p>
-            <a href="archive/">Browse captured files</a>
-          </body>
-          </html>
-          EOF
 
 
       # Upload the COMPLETE original ArchiveBox directory as a GitHub artifact.
