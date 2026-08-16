@@ -45,22 +45,24 @@ jobs:
 
 
       # Initialize ArchiveBox AND install all documented runtime dependencies.
-      # This is the official ArchiveBox workflow: init followed by install.
+      # Added --init to prevent zombie process lockups during setup.
       - name: Initialize and install ArchiveBox
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
 
           docker run --rm \
+            --init \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
 
 
       # Archive the requested URL.
-      # The YouTube cookies are mounted read-only and are used only during this run.
+      # Added --init so that background extraction processes terminate cleanly on GitHub Actions.
       - name: Archive URL
         run: |
           docker run --rm \
+            --init \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
             -e YTDLP_ENABLED=true \
