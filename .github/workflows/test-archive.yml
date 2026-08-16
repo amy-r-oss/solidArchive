@@ -120,14 +120,17 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
+            -e OUTPUT_PERMISSIONS="public" \
             my-archivebox \
             list --html --with-headers > archive/index.html
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
+            -e OUTPUT_PERMISSIONS="public" \
             my-archivebox \
             list --json --with-headers > archive/index.json
+
 
 
 
@@ -150,12 +153,13 @@ jobs:
           cp archive/index.html pages/index.html
           cp archive/index.json pages/index.json
 
-          # Copy the captured snapshots/media.
+          # FIX: Change target folder copy name from snapshot back to archive
           cp -a archive/archive pages/archive
 
           echo "=== Pages contents ==="
           du -sh pages
           find pages -type f | head -100
+
 
 
       # Prepare GitHub Pages.
