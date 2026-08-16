@@ -11,19 +11,27 @@ on:
 jobs:
   archive:
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       pages: write
       id-token: write
 
     steps:
-      - name: Checkout this exact fork/commit
+
+      # Get the exact ArchiveBox fork/commit being tested.
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Build ArchiveBox from this source
+
+      # Build your fork with yt-dlp installed in the image.
+      - name: Build ArchiveBox image
         run: |
           docker build -t my-archivebox .
 
+
+      # Re-create the temporary YouTube authentication file.
+      # This file is NEVER put into archive/ or GitHub artifacts.
       - name: Create temporary YouTube cookies
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
@@ -32,37 +40,72 @@ jobs:
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
 
-      - name: Test yt-dlp inside ArchiveBox container
+      # Initialize ArchiveBox and archive the requested URL.
+      # yt-dlp, Node and FFmpeg are available inside the image.
+      # The YouTube cookies are mounted read-only.
+      - name: Create ArchiveBox archive
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/archive"
+
           docker run --rm \
-            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            yt-dlp \
-            --cookies /tmp/cookies.txt \
-            --js-runtimes node \
-            --remote-components ejs:github \
-            --list-formats \
-            "${{ inputs.url }}"
-      # - name: Create archive
-      #   run: |
-      #     mkdir -p "$GITHUB_WORKSPACE/archive"
+            init
 
-      #     docker run --rm \
-      #       -v "$GITHUB_WORKSPACE/archive:/data" \
-      #       my-archivebox \
-      #       init
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            -e YTDLP_ENABLED=true \
+            -e YTDLP_BINARY=yt-dlp \
+            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            my-archivebox \
+            add "${{ inputs.url }}"
 
-      #     docker run --rm \
-      #       -v "$GITHUB_WORKSPACE/archive:/data" \
-      #       -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-      #       -e YTDLP_ENABLED=true \
-      #       -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-      #       -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
-      #       my-archivebox \
-      #       add "${{ inputs.url }}"
 
-            
-      - name: Create static ArchiveBox index
+      # Remove authentication credentials immediately after archiving.
+      - name: Remove temporary cookies
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cookies.txt"
+
+
+      # Show whether ArchiveBox actually downloaded the media.
+      - name: Check captured media
+        run: |
+          echo "=== MEDIA FILES ==="
+
+          find archive -type f \( \
+            -name "*.mp4" -o \
+            -name "*.webm" -o \
+            -name "*.mkv" -o \
+            -name "*.m4a" \
+          \) -print
+
+          echo "=== YT-DLP LOGS ==="
+
+          grep -RniE "yt-dlp|YTDLP|youtube" \
+            archive/logs 2>/dev/null | tail -100 || true
+
+
+      # Show the original ArchiveBox output.
+      - name: Show archive
+        run: |
+          echo "=== ARCHIVE SIZE ==="
+          du -sh archive
+
+          echo "=== FILES ==="
+          find archive -type f | sort | head -300
+
+
+      # Show any extractor errors without making the job fail.
+      - name: Show errors
+        run: |
+          grep -RniE "ERROR|failed|yt-dlp|youtube" \
+            archive/logs 2>/dev/null | tail -200 || true
+
+
+      # Create a static ArchiveBox index for GitHub Pages.
+      - name: Create ArchiveBox static index
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
@@ -74,85 +117,28 @@ jobs:
             my-archivebox \
             list --json --with-headers > archive/index.json
 
-          ls -lh archive/index.html archive/index.json
 
-          
-      - name: Remove temporary cookies
-        if: always()
-        run: |
-          rm -f "$RUNNER_TEMP/cookies.txt"
-
-      - name: Check YouTube capture
-        run: |
-          echo "=== Media files ==="
-          find archive -type f \( \
-            -name "*.mp4" -o \
-            -name "*.webm" -o \
-            -name "*.mkv" -o \
-            -name "*.m4a" \
-          \) -print
-
-          echo "=== yt-dlp / YouTube logs ==="
-          grep -RniE "yt-dlp|YTDLP|youtube" archive/logs 2>/dev/null | tail -100 || true
-
-      - name: Show result
-        run: |
-          echo "=== Archive size ==="
-          du -sh archive
-
-          echo "=== Archive files ==="
-          find archive -maxdepth 5 -type f | sort | head -200
-
-      - name: Show media errors
-        run: |
-          grep -RniE "yt-dlp|youtube|media.*failed|ERROR" \
-            archive/logs archive/archive 2>/dev/null | tail -100 || true
-
-      - name: Install WACZ
-        run: |
-          python3 -m pip install wacz
-
-      - name: Find WARC files
-        run: |
-          find archive -type f \( -name "*.warc" -o -name "*.warc.gz" \) -print
-
-      - name: Create WACZ
-        run: |
-          WARC=$(find archive -type f \( -name "*.warc" -o -name "*.warc.gz" \) | head -n 1)
-
-          if [ -z "$WARC" ]; then
-            echo "ERROR: No WARC file found"
-            exit 1
-          fi
-
-          echo "Using WARC: $WARC"
-          wacz create "$WARC" -o archive.wacz --detect-pages
-
-      - name: Check WACZ
-        run: |
-          ls -lh archive.wacz
-
-      - name: Upload WACZ
-        uses: actions/upload-artifact@v4
-        with:
-          name: archive
-          path: archive.wacz
-
+      # Preserve the COMPLETE ORIGINAL ArchiveBox output.
       - name: Upload complete ArchiveBox output
         uses: actions/upload-artifact@v4
         with:
           name: archive-test-output
           path: archive/
 
-          
-      - name: Prepare GitHub Pages
+
+      # Prepare GitHub Pages.
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload ArchiveBox to GitHub Pages
+
+      # Publish the ArchiveBox folder as a static viewing copy.
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: archive/
 
-      - name: Deploy ArchiveBox to GitHub Pages
+
+      # Deploy the static ArchiveBox viewer.
+      - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
