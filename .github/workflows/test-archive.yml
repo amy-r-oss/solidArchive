@@ -11,6 +11,10 @@ on:
 jobs:
   archive:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
 
     steps:
       - name: Checkout this exact fork/commit
@@ -45,6 +49,22 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
+            
+      - name: Create static ArchiveBox index
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --html --with-headers > archive/index.html
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --json --with-headers > archive/index.json
+
+          ls -lh archive/index.html archive/index.json
+
+          
       - name: Remove temporary cookies
         if: always()
         run: |
@@ -111,3 +131,16 @@ jobs:
         with:
           name: archive-test-output
           path: archive/
+
+          
+      - name: Prepare GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload ArchiveBox to GitHub Pages
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: archive/
+
+      - name: Deploy ArchiveBox to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
