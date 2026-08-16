@@ -31,7 +31,8 @@ jobs:
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
-      - name: Create archive
+
+      - name: Diagnose ArchiveBox yt-dlp
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
 
@@ -45,9 +46,35 @@ jobs:
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
             -e YTDLP_ENABLED=true \
             -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-            -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
             my-archivebox \
-            add "${{ inputs.url }}"
+            config --search yt-dlp
+
+          echo "=== YTDLP COOKIES ==="
+
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            -e YTDLP_ENABLED=true \
+            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            my-archivebox \
+            config --get YTDLP_COOKIES_FILE
+      # - name: Create archive
+      #   run: |
+      #     mkdir -p "$GITHUB_WORKSPACE/archive"
+
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       my-archivebox \
+      #       init
+
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+      #       -e YTDLP_ENABLED=true \
+      #       -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+      #       -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
+      #       my-archivebox \
+      #       add "${{ inputs.url }}"
 
             
       - name: Create static ArchiveBox index
