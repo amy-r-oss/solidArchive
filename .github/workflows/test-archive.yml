@@ -120,18 +120,16 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
-            -e OUTPUT_PERMISSIONS="public" \
+            -e OUTPUT_PERMISSIONS="755" \
             my-archivebox \
             list --html --with-headers > archive/index.html
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
-            -e OUTPUT_PERMISSIONS="public" \
+            -e OUTPUT_PERMISSIONS="755" \
             my-archivebox \
             list --json --with-headers > archive/index.json
-
-
 
 
       # Upload the COMPLETE original ArchiveBox directory as a GitHub artifact.
