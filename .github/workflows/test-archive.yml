@@ -120,6 +120,7 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
+            -e REPLAY_METHOD="relative" \
             -e OUTPUT_PERMISSIONS="755" \
             my-archivebox \
             list --html --with-headers > archive/index.html
@@ -127,9 +128,11 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
+            -e REPLAY_METHOD="relative" \
             -e OUTPUT_PERMISSIONS="755" \
             my-archivebox \
             list --json --with-headers > archive/index.json
+
 
 
       # Upload the COMPLETE original ArchiveBox directory as a GitHub artifact.
@@ -147,16 +150,16 @@ jobs:
           rm -rf pages
           mkdir -p pages
 
-          # ArchiveBox's generated viewer.
+          # Copy ArchiveBox's newly generated root files
           cp archive/index.html pages/index.html
           cp archive/index.json pages/index.json
 
-          # FIX: Change target folder copy name from snapshot back to archive
-          cp -a archive/archive pages/archive
+          # FIX: Recursively copy the entire multi-user directory schema into pages
+          cp -a archive/archive pages/
 
           echo "=== Pages contents ==="
           du -sh pages
-          find pages -type f | head -100
+          find pages -type f | head (edited) -100
 
 
 
