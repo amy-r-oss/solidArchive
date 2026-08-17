@@ -309,27 +309,38 @@ jobs:
           path: archive/
 
 
-      # ============================================================
+            # ============================================================
       # 13. Prepare GitHub Pages
       #
-      # IMPORTANT:
+      # ArchiveBox's actual layout on the GitHub runner is:
       #
-      # The COMPLETE ArchiveBox directory is preserved separately
-      # in the GitHub Actions artifact above.
+      #   archive/
+      #   └── archive/
+      #       └── users/
       #
-      # GitHub Pages should contain ONLY the static viewer and the
-      # actual ArchiveBox archive data required by that viewer.
+      # The OUTER archive/ is ArchiveBox's working/data directory.
       #
-      # Do NOT copy the entire ArchiveBox working directory.
-      # This avoids internal directories such as:
+      # The INNER archive/ is the actual static archive tree.
       #
-      #   lib/
+      # Therefore Pages must receive:
+      #
+      #   pages/
+      #   ├── index.html
+      #   ├── index.json
+      #   └── archive/
+      #       └── users/
+      #
+      # We intentionally do NOT copy:
+      #
       #   logs/
+      #   machines/
+      #   personas/
+      #   sonic/
       #   sources/
-      #   database files
+      #   tmp/
       #
-      # which are not needed by the static website and can cause
-      # the Pages tar operation to fail while packaging.
+      # Those are ArchiveBox internal/runtime data and are not
+      # required by the static viewer.
       # ============================================================
       - name: Prepare Pages site
         shell: bash
@@ -343,49 +354,34 @@ jobs:
           rm -rf pages
 
           mkdir -p pages
-          mkdir -p pages/archive
 
           # --------------------------------------------------------
-          # Static ArchiveBox indexes
+          # Copy the static indexes.
           # --------------------------------------------------------
           cp archive/index.html pages/index.html
           cp archive/index.json pages/index.json
 
           # --------------------------------------------------------
-          # The current ArchiveBox snapshot tree is under:
+          # Copy the ACTUAL ArchiveBox static archive tree.
           #
-          #   archive/users/
+          # Runner layout:
           #
-          # Preserve that structure under:
+          # archive/archive/users/...
           #
-          #   pages/archive/users/
+          # Pages layout:
           #
+          # pages/archive/users/...
           # --------------------------------------------------------
-          if [ -d "archive/users" ]; then
+          mkdir -p pages/archive
 
-            echo "Found ArchiveBox snapshot tree:"
-            echo "archive/users"
-
-            cp -a archive/users pages/archive/
-
-          else
-
-            echo
-            echo "ERROR: ArchiveBox users directory was not found."
-            echo
-            echo "Actual archive directory:"
-            find archive -maxdepth 3 -type d | sort
-            echo
-
-            exit 1
-          fi
+          cp -a archive/archive/. pages/archive/
 
           # --------------------------------------------------------
-          # Verify the Pages copy.
+          # Verify.
           # --------------------------------------------------------
           echo
           echo "============================================================"
-          echo " PAGES STRUCTURE"
+          echo " FINAL PAGES STRUCTURE"
           echo "============================================================"
 
           find pages \
@@ -408,6 +404,8 @@ jobs:
 
           find pages -type f | wc -l
 
+
+          
       # ============================================================
       # 14. Configure GitHub Pages
       # ============================================================
