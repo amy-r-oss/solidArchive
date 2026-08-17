@@ -23,25 +23,24 @@ jobs:
 
     steps:
 
-      # ------------------------------------------------------------
-      # 1. Checkout your ArchiveBox fork/source
-      # ------------------------------------------------------------
+      # ============================================================
+      # 1. Checkout ArchiveBox source
+      # ============================================================
       - name: Checkout source
         uses: actions/checkout@v4
 
 
-      # ------------------------------------------------------------
-      # 2. Build your ArchiveBox image
-      #    Includes your yt-dlp + EJS changes
-      # ------------------------------------------------------------
+      # ============================================================
+      # 2. Build ArchiveBox image
+      # ============================================================
       - name: Build ArchiveBox image
         run: |
           docker build -t my-archivebox .
 
 
-      # ------------------------------------------------------------
-      # 3. Create temporary YouTube authentication file
-      # ------------------------------------------------------------
+      # ============================================================
+      # 3. Create temporary YouTube cookies
+      # ============================================================
       - name: Create temporary YouTube cookies
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
@@ -50,9 +49,9 @@ jobs:
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 4. Initialize ArchiveBox
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Initialize and install ArchiveBox
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
@@ -64,34 +63,155 @@ jobs:
             init --install
 
 
-      # ------------------------------------------------------------
-      # 5. Archive the requested URL
-      # ------------------------------------------------------------
+      # ============================================================
+      # 5. Archive URL
+      #
+      # Automatically retries if ArchiveBox/abxbus gets stuck
+      # during ProcessKillEvent shutdown.
+      # ============================================================
       - name: Archive URL
+        env:
+          ARCHIVE_URL: ${{ inputs.url }}
         run: |
-          docker run --rm \
-            --init \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            -e YTDLP_ENABLED=true \
-            -e YTDLP_BINARY=yt-dlp \
-            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-            my-archivebox \
-            add "${{ inputs.url }}"
+          set +e
+
+          MAX_ATTEMPTS=3
+          ATTEMPT=1
+
+          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
+
+            echo
+            echo "============================================================"
+            echo " ArchiveBox attempt $ATTEMPT / $MAX_ATTEMPTS"
+            echo "============================================================"
+            echo
+
+            CONTAINER_NAME="archivebox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ATTEMPT}"
+
+            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+            timeout --signal=TERM --kill-after=15s 30m \
+              docker run \
+                --name "$CONTAINER_NAME" \
+                --init \
+                -v "$GITHUB_WORKSPACE/archive:/data" \
+                -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+                -e YTDLP_ENABLED=true \
+                -e YTDLP_BINARY=yt-dlp \
+                -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+                my-archivebox \
+                add "$ARCHIVE_URL"
+
+            EXIT_CODE=$?
+
+            echo
+            echo "ArchiveBox exit code: $EXIT_CODE"
+
+            if [ "$EXIT_CODE" -eq 0 ]; then
+
+              echo
+              echo "ArchiveBox completed successfully."
+              echo
+
+              docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+              exit 0
+            fi
+
+            echo
+            echo "WARNING: ArchiveBox attempt $ATTEMPT failed."
+            echo "Cleaning up container..."
+            echo
+
+            docker stop -t 5 "$CONTAINER_NAME" \
+              >/dev/null 2>&1 || true
+
+            docker rm -f "$CONTAINER_NAME" \
+              >/dev/null 2>&1 || true
+
+            sleep 3
+
+            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Retrying with a fresh ArchiveBox container..."
+              sleep 5
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+          done
+
+          echo
+          echo "ArchiveBox failed after $MAX_ATTEMPTS attempts."
+          exit 1
 
 
-      # ------------------------------------------------------------
-      # 6. Immediately remove authentication credentials
-      # ------------------------------------------------------------
+      # ============================================================
+      # 6. Remove YouTube credentials
+      # ============================================================
       - name: Remove temporary cookies
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/cookies.txt"
 
 
-      # ------------------------------------------------------------
-      # 7. Check captured media
-      # ------------------------------------------------------------
+      # ============================================================
+      # 7. Show EXACT runner filesystem
+      #
+      # This is intentionally before the Pages preparation.
+      # It tells us exactly where ArchiveBox put everything.
+      # ============================================================
+      - name: Inspect ArchiveBox filesystem
+        run: |
+          echo "============================================================"
+          echo " WORKSPACE"
+          echo "============================================================"
+
+          pwd
+
+          echo
+          echo "============================================================"
+          echo " archive/ ROOT"
+          echo "============================================================"
+
+          ls -la archive || true
+
+          echo
+          echo "============================================================"
+          echo " DIRECTORIES UNDER archive/"
+          echo "============================================================"
+
+          find archive \
+            -maxdepth 4 \
+            -type d \
+            -print \
+            | sort \
+            | head -300
+
+          echo
+          echo "============================================================"
+          echo " POSSIBLE SNAPSHOT DIRECTORIES"
+          echo "============================================================"
+
+          find archive \
+            -type d \
+            \( \
+              -name "snapshots" -o \
+              -name "users" -o \
+              -name "crawls" \
+            \) \
+            -print \
+            | sort
+
+          echo
+          echo "============================================================"
+          echo " FILE COUNT"
+          echo "============================================================"
+
+          find archive -type f | wc -l
+
+
+      # ============================================================
+      # 8. Check captured media
+      # ============================================================
       - name: Check captured media
         run: |
           echo "=== MEDIA FILES ==="
@@ -104,63 +224,51 @@ jobs:
           \) -print
 
           echo
+          echo "=== MEDIA COUNT ==="
+
+          MEDIA_COUNT=$(find archive -type f \( \
+            -name "*.mp4" -o \
+            -name "*.webm" -o \
+            -name "*.mkv" -o \
+            -name "*.m4a" \
+          \) | wc -l)
+
+          echo "Captured media files: $MEDIA_COUNT"
+
+          echo
           echo "=== YT-DLP LOGS ==="
 
           grep -RniE "yt-dlp|YTDLP|youtube" \
-            archive/logs 2>/dev/null | tail -100 || true
+            archive/logs 2>/dev/null \
+            | tail -100 || true
 
 
-      # ------------------------------------------------------------
-      # 8. Show archive structure
-      # ------------------------------------------------------------
-      - name: Show archive
+      # ============================================================
+      # 9. Show archive files/errors
+      # ============================================================
+      - name: Show archive errors
         run: |
           echo "=== ARCHIVE SIZE ==="
           du -sh archive
 
           echo
-          echo "=== TOP-LEVEL DIRECTORIES ==="
-          find archive -maxdepth 2 -type d | sort
+          echo "=== EXTRACTOR ERRORS ==="
 
-          echo
-          echo "=== ARCHIVE CONTENT DIRECTORIES ==="
-          find archive/archive -maxdepth 4 -type d 2>/dev/null | sort | head -200 || true
-
-          echo
-          echo "=== NEW USER SNAPSHOT LAYOUT ==="
-          find archive/users -maxdepth 6 -type d 2>/dev/null | sort | head -200 || true
-
-          echo
-          echo "=== FILES ==="
-          find archive -type f | sort | head -300
-
-
-      # ------------------------------------------------------------
-      # 9. Show extractor errors
-      # ------------------------------------------------------------
-      - name: Show archive errors
-        run: |
           grep -RniE "ERROR|failed|yt-dlp|youtube" \
-            archive/logs 2>/dev/null | tail -200 || true
+            archive/logs 2>/dev/null \
+            | tail -200 || true
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 10. Generate ArchiveBox static index
       #
       # IMPORTANT:
       #
-      # We intentionally DO NOT set BASE_URL.
-      # We intentionally DO NOT set REPLAY_METHOD.
+      # No BASE_URL.
+      # No REPLAY_METHOD.
       #
-      # ArchiveBox's documented static-export method generates
-      # relative paths:
-      #
-      #     archivebox list --html --with-headers > index.html
-      #     archivebox list --json --with-headers > index.json
-      #
-      # This allows the same files to work on localhost,
-      # GitHub Pages, or another static web server.
-      # ------------------------------------------------------------
+      # Let ArchiveBox produce its own static relative links.
+      # ============================================================
       - name: Create static ArchiveBox index
         run: |
           docker run --rm \
@@ -174,40 +282,31 @@ jobs:
             list --json --with-headers > archive/index.json
 
 
-      # ------------------------------------------------------------
-      # 11. Inspect the generated static index
-      #
-      # This does NOT search for any particular snapshot UUID.
-      # It only shows what ArchiveBox itself generated.
-      # ------------------------------------------------------------
+      # ============================================================
+      # 11. Verify generated static index
+      # ============================================================
       - name: Verify static export
         run: |
-          echo "=== GENERATED INDEX ==="
+          echo "============================================================"
+          echo " GENERATED INDEX FILES"
+          echo "============================================================"
+
           ls -lh archive/index.html archive/index.json
 
           echo
-          echo "=== STATIC LINKS GENERATED BY ARCHIVEBOX ==="
+          echo "============================================================"
+          echo " FIRST GENERATED LINKS"
+          echo "============================================================"
+
           grep -oE 'href="[^"]+"' archive/index.html \
             | head -100 || true
 
-          echo
-          echo "=== ARCHIVE DIRECTORY ==="
-          ls -la archive/ || true
 
-          echo
-          echo "=== SNAPSHOT STORAGE ==="
-          find archive/users/system/snapshots \
-            -maxdepth 5 \
-            -type d \
-            2>/dev/null \
-            | head -100 || true
-
-
-      # ------------------------------------------------------------
-      # 12. Upload the COMPLETE ORIGINAL ArchiveBox data
+      # ============================================================
+      # 12. Upload COMPLETE original ArchiveBox data
       #
-      # This remains untouched and is the forensic/archive copy.
-      # ------------------------------------------------------------
+      # Nothing is removed or modified for this artifact.
+      # ============================================================
       - name: Upload complete ArchiveBox output
         uses: actions/upload-artifact@v4
         with:
@@ -215,101 +314,124 @@ jobs:
           path: archive/
 
 
-      # ------------------------------------------------------------
-      # 13. Prepare GitHub Pages copy
+      # ============================================================
+      # 13. Prepare GitHub Pages
       #
-      # ArchiveBox's DATA directory is:
+      # IMPORTANT:
       #
-      # archive/
-      # ├── index.html
-      # ├── index.json
-      # ├── users/
-      # │   └── system/
-      # │       └── snapshots/
-      # └── ...
+      # We DO NOT assume archive/users.
       #
-      # The static index expects the archive content to remain
-      # underneath an "archive/" path.
-      #
-      # Therefore Pages gets:
-      #
-      # pages/
-      # ├── index.html
-      # ├── index.json
-      # └── archive/
-      #     ├── users/
-      #     └── legacy snapshot links...
-      #
-      # We copy ONLY the actual archive content, not the SQLite DB,
-      # logs, sources, config, etc.
-      # ------------------------------------------------------------
+      # We detect where ArchiveBox actually stored its archive tree.
+      # ============================================================
       - name: Prepare Pages site
+        shell: bash
         run: |
-          rm -rf pages
-          mkdir -p pages/archive
+          set -e
 
-          # Static ArchiveBox index
+          echo "============================================================"
+          echo " PREPARING GITHUB PAGES"
+          echo "============================================================"
+
+          rm -rf pages
+          mkdir -p pages
+
+          # --------------------------------------------------------
+          # Copy the static indexes.
+          # --------------------------------------------------------
           cp archive/index.html pages/index.html
           cp archive/index.json pages/index.json
 
-          # Copy the actual ArchiveBox archive tree.
+          # --------------------------------------------------------
+          # Detect ArchiveBox's actual storage layout.
           #
-          # Current ArchiveBox stores snapshot data under:
+          # Possible layouts include:
           #
-          # archive/users/system/snapshots/...
+          #   archive/users/...
           #
-          # Copy the contents of archive/ into Pages' archive/
-          # directory so the relative paths remain valid.
-          cp -a archive/users pages/archive/
+          # or:
+          #
+          #   archive/archive/users/...
+          #
+          # We do NOT hard-code a snapshot UUID.
+          # --------------------------------------------------------
 
-          # Preserve backwards-compatible snapshot links if they
-          # exist in the ArchiveBox data directory.
-          #
-          # These are normally symlinks generated by ArchiveBox.
-          find archive \
-            -mindepth 1 \
-            -maxdepth 1 \
-            ! -name "index.html" \
-            ! -name "index.json" \
-            ! -name "users" \
-            ! -name "index.sqlite3" \
-            ! -name "ArchiveBox.conf" \
-            ! -name "logs" \
-            ! -name "sources" \
-            -exec cp -a {} pages/archive/ \; \
-            2>/dev/null || true
+          if [ -d "archive/users" ]; then
 
-          echo "=== PAGES SIZE ==="
+            echo "Detected ArchiveBox layout:"
+            echo "    archive/users/"
+
+            mkdir -p pages/archive
+
+            cp -a archive/users pages/archive/
+
+          elif [ -d "archive/archive" ]; then
+
+            echo "Detected ArchiveBox layout:"
+            echo "    archive/archive/"
+
+            cp -a archive/archive pages/
+
+          else
+
+            echo
+            echo "ERROR: Could not locate ArchiveBox archive tree."
+            echo
+            echo "Contents of archive/:"
+            find archive -maxdepth 4 -print | sort | head -500
+            echo
+
+            exit 1
+          fi
+
+          # --------------------------------------------------------
+          # Show final Pages tree.
+          # --------------------------------------------------------
+
+          echo
+          echo "============================================================"
+          echo " FINAL PAGES STRUCTURE"
+          echo "============================================================"
+
+          find pages \
+            -maxdepth 7 \
+            -print \
+            | sort \
+            | head -500
+
+          echo
+          echo "============================================================"
+          echo " PAGES SIZE"
+          echo "============================================================"
+
           du -sh pages
 
           echo
-          echo "=== PAGES STRUCTURE ==="
-          find pages -maxdepth 6 -type d | sort | head -300
+          echo "============================================================"
+          echo " PAGES FILE COUNT"
+          echo "============================================================"
 
-          echo
-          echo "=== PAGES FILES ==="
-          find pages -type f | sort | head -300
+          find pages -type f | wc -l
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 14. Configure GitHub Pages
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
 
-      # ------------------------------------------------------------
-      # 15. Upload static Pages artifact
-      # ------------------------------------------------------------
+      # ============================================================
+      # 15. Upload Pages artifact
+      # ============================================================
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: pages/
 
 
-      # ------------------------------------------------------------
+      # ============================================================
       # 16. Deploy GitHub Pages
-      # ------------------------------------------------------------
+      # ============================================================
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
