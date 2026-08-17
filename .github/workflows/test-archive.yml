@@ -12,30 +12,36 @@ jobs:
   archive:
     runs-on: ubuntu-latest
 
-    # Allow this workflow to deploy the static viewer to GitHub Pages.
     permissions:
       contents: read
       pages: write
       id-token: write
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
 
-      # Get the exact fork/commit being tested.
+      # ------------------------------------------------------------
+      # 1. Checkout your ArchiveBox fork/source
+      # ------------------------------------------------------------
       - name: Checkout source
         uses: actions/checkout@v4
 
 
-      # Build your ArchiveBox fork, including yt-dlp + EJS.
+      # ------------------------------------------------------------
+      # 2. Build your ArchiveBox image
+      #    Includes your yt-dlp + EJS changes
+      # ------------------------------------------------------------
       - name: Build ArchiveBox image
         run: |
           docker build -t my-archivebox .
 
 
-      # Create a temporary YouTube authentication file.
-      # It is kept outside the archive and never uploaded as an artifact.
+      # ------------------------------------------------------------
+      # 3. Create temporary YouTube authentication file
+      # ------------------------------------------------------------
       - name: Create temporary YouTube cookies
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
@@ -44,8 +50,9 @@ jobs:
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
 
-      # Initialize ArchiveBox AND install all documented runtime dependencies.
-      # Added --init to prevent zombie process lockups during setup.
+      # ------------------------------------------------------------
+      # 4. Initialize ArchiveBox
+      # ------------------------------------------------------------
       - name: Initialize and install ArchiveBox
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
@@ -57,8 +64,9 @@ jobs:
             init --install
 
 
-      # Archive the requested URL.
-      # Added --init so that background extraction processes terminate cleanly on GitHub Actions.
+      # ------------------------------------------------------------
+      # 5. Archive the requested URL
+      # ------------------------------------------------------------
       - name: Archive URL
         run: |
           docker run --rm \
@@ -72,14 +80,18 @@ jobs:
             add "${{ inputs.url }}"
 
 
-      # Remove the authentication credential immediately after archiving.
+      # ------------------------------------------------------------
+      # 6. Immediately remove authentication credentials
+      # ------------------------------------------------------------
       - name: Remove temporary cookies
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/cookies.txt"
 
 
-      # Check whether the actual video/audio was captured.
+      # ------------------------------------------------------------
+      # 7. Check captured media
+      # ------------------------------------------------------------
       - name: Check captured media
         run: |
           echo "=== MEDIA FILES ==="
@@ -91,51 +103,111 @@ jobs:
             -name "*.m4a" \
           \) -print
 
+          echo
           echo "=== YT-DLP LOGS ==="
 
           grep -RniE "yt-dlp|YTDLP|youtube" \
             archive/logs 2>/dev/null | tail -100 || true
 
 
-      # Show the complete ArchiveBox output without changing it.
+      # ------------------------------------------------------------
+      # 8. Show archive structure
+      # ------------------------------------------------------------
       - name: Show archive
         run: |
           echo "=== ARCHIVE SIZE ==="
           du -sh archive
 
+          echo
+          echo "=== TOP-LEVEL DIRECTORIES ==="
+          find archive -maxdepth 2 -type d | sort
+
+          echo
+          echo "=== ARCHIVE CONTENT DIRECTORIES ==="
+          find archive/archive -maxdepth 4 -type d 2>/dev/null | sort | head -200 || true
+
+          echo
+          echo "=== NEW USER SNAPSHOT LAYOUT ==="
+          find archive/users -maxdepth 6 -type d 2>/dev/null | sort | head -200 || true
+
+          echo
           echo "=== FILES ==="
           find archive -type f | sort | head -300
 
 
-      # Show extractor errors for diagnosis.
+      # ------------------------------------------------------------
+      # 9. Show extractor errors
+      # ------------------------------------------------------------
       - name: Show archive errors
         run: |
           grep -RniE "ERROR|failed|yt-dlp|youtube" \
             archive/logs 2>/dev/null | tail -200 || true
 
 
-      # Generate ArchiveBox's static index for the GitHub Pages viewer.
+      # ------------------------------------------------------------
+      # 10. Generate ArchiveBox static index
+      #
+      # IMPORTANT:
+      #
+      # We intentionally DO NOT set BASE_URL.
+      # We intentionally DO NOT set REPLAY_METHOD.
+      #
+      # ArchiveBox's documented static-export method generates
+      # relative paths:
+      #
+      #     archivebox list --html --with-headers > index.html
+      #     archivebox list --json --with-headers > index.json
+      #
+      # This allows the same files to work on localhost,
+      # GitHub Pages, or another static web server.
+      # ------------------------------------------------------------
       - name: Create static ArchiveBox index
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
-            -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
-            -e REPLAY_METHOD="relative" \
-            -e OUTPUT_PERMISSIONS="755" \
             my-archivebox \
             list --html --with-headers > archive/index.html
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
-            -e BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/" \
-            -e REPLAY_METHOD="relative" \
-            -e OUTPUT_PERMISSIONS="755" \
             my-archivebox \
             list --json --with-headers > archive/index.json
 
 
+      # ------------------------------------------------------------
+      # 11. Inspect the generated static index
+      #
+      # This does NOT search for any particular snapshot UUID.
+      # It only shows what ArchiveBox itself generated.
+      # ------------------------------------------------------------
+      - name: Verify static export
+        run: |
+          echo "=== GENERATED INDEX ==="
+          ls -lh archive/index.html archive/index.json
 
-      # Upload the COMPLETE original ArchiveBox directory as a GitHub artifact.
+          echo
+          echo "=== STATIC LINKS GENERATED BY ARCHIVEBOX ==="
+          grep -oE 'href="[^"]+"' archive/index.html \
+            | head -100 || true
+
+          echo
+          echo "=== ARCHIVE DIRECTORY ==="
+          ls -la archive/ || true
+
+          echo
+          echo "=== SNAPSHOT STORAGE ==="
+          find archive/users/system/snapshots \
+            -maxdepth 5 \
+            -type d \
+            2>/dev/null \
+            | head -100 || true
+
+
+      # ------------------------------------------------------------
+      # 12. Upload the COMPLETE ORIGINAL ArchiveBox data
+      #
+      # This remains untouched and is the forensic/archive copy.
+      # ------------------------------------------------------------
       - name: Upload complete ArchiveBox output
         uses: actions/upload-artifact@v4
         with:
@@ -143,39 +215,101 @@ jobs:
           path: archive/
 
 
-      # Create a separate, static copy for GitHub Pages.
-      # The original ArchiveBox directory remains untouched.
+      # ------------------------------------------------------------
+      # 13. Prepare GitHub Pages copy
+      #
+      # ArchiveBox's DATA directory is:
+      #
+      # archive/
+      # ├── index.html
+      # ├── index.json
+      # ├── users/
+      # │   └── system/
+      # │       └── snapshots/
+      # └── ...
+      #
+      # The static index expects the archive content to remain
+      # underneath an "archive/" path.
+      #
+      # Therefore Pages gets:
+      #
+      # pages/
+      # ├── index.html
+      # ├── index.json
+      # └── archive/
+      #     ├── users/
+      #     └── legacy snapshot links...
+      #
+      # We copy ONLY the actual archive content, not the SQLite DB,
+      # logs, sources, config, etc.
+      # ------------------------------------------------------------
       - name: Prepare Pages site
         run: |
           rm -rf pages
-          mkdir -p pages
+          mkdir -p pages/archive
 
-          # Copy ArchiveBox's newly generated root files
+          # Static ArchiveBox index
           cp archive/index.html pages/index.html
           cp archive/index.json pages/index.json
 
-          # FIX: Recursively copy the entire multi-user directory schema into pages
-          cp -a archive/archive pages/
+          # Copy the actual ArchiveBox archive tree.
+          #
+          # Current ArchiveBox stores snapshot data under:
+          #
+          # archive/users/system/snapshots/...
+          #
+          # Copy the contents of archive/ into Pages' archive/
+          # directory so the relative paths remain valid.
+          cp -a archive/users pages/archive/
 
-          echo "=== Pages contents ==="
+          # Preserve backwards-compatible snapshot links if they
+          # exist in the ArchiveBox data directory.
+          #
+          # These are normally symlinks generated by ArchiveBox.
+          find archive \
+            -mindepth 1 \
+            -maxdepth 1 \
+            ! -name "index.html" \
+            ! -name "index.json" \
+            ! -name "users" \
+            ! -name "index.sqlite3" \
+            ! -name "ArchiveBox.conf" \
+            ! -name "logs" \
+            ! -name "sources" \
+            -exec cp -a {} pages/archive/ \; \
+            2>/dev/null || true
+
+          echo "=== PAGES SIZE ==="
           du -sh pages
-          find pages -type f | head -n 100
+
+          echo
+          echo "=== PAGES STRUCTURE ==="
+          find pages -maxdepth 6 -type d | sort | head -300
+
+          echo
+          echo "=== PAGES FILES ==="
+          find pages -type f | sort | head -300
 
 
-
-      # Prepare GitHub Pages.
+      # ------------------------------------------------------------
+      # 14. Configure GitHub Pages
+      # ------------------------------------------------------------
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
 
-      # Upload ONLY the static viewing copy.
+      # ------------------------------------------------------------
+      # 15. Upload static Pages artifact
+      # ------------------------------------------------------------
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
           path: pages/
 
 
-      # Deploy the static ArchiveBox viewer.
+      # ------------------------------------------------------------
+      # 16. Deploy GitHub Pages
+      # ------------------------------------------------------------
       - name: Deploy GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
