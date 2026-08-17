@@ -159,7 +159,7 @@ jobs:
 
           echo "=== Pages contents ==="
           du -sh pages
-          find pages -type f | head (edited) -100
+          find pages -type f | head -n 100
 
 
 
