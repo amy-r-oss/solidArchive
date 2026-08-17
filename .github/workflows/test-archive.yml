@@ -314,26 +314,22 @@ jobs:
       #
       # IMPORTANT:
       #
-      # Do NOT assume:
+      # The COMPLETE ArchiveBox directory is preserved separately
+      # in the GitHub Actions artifact above.
       #
-      #   archive/users
+      # GitHub Pages should contain ONLY the static viewer and the
+      # actual ArchiveBox archive data required by that viewer.
       #
-      # Do NOT assume:
+      # Do NOT copy the entire ArchiveBox working directory.
+      # This avoids internal directories such as:
       #
-      #   archive/archive/users
+      #   lib/
+      #   logs/
+      #   sources/
+      #   database files
       #
-      # Instead, preserve the ENTIRE ArchiveBox archive tree.
-      #
-      # Result:
-      #
-      #   pages/
-      #   ├── index.html
-      #   ├── index.json
-      #   └── archive/
-      #       └── [everything from ArchiveBox archive/]
-      #
-      # This preserves whatever directory layout ArchiveBox
-      # actually generated, including users/system/snapshots.
+      # which are not needed by the static website and can cause
+      # the Pages tar operation to fail while packaging.
       # ============================================================
       - name: Prepare Pages site
         shell: bash
@@ -350,54 +346,50 @@ jobs:
           mkdir -p pages/archive
 
           # --------------------------------------------------------
-          # Copy the generated static indexes.
+          # Static ArchiveBox indexes
           # --------------------------------------------------------
           cp archive/index.html pages/index.html
           cp archive/index.json pages/index.json
 
           # --------------------------------------------------------
-          # IMPORTANT:
+          # The current ArchiveBox snapshot tree is under:
           #
-          # Copy the CONTENTS of the ArchiveBox data directory
-          # into pages/archive/.
+          #   archive/users/
           #
-          # This does not care whether ArchiveBox has:
+          # Preserve that structure under:
           #
-          #   users/
-          #   archive/
-          #   crawls/
-          #   snapshots/
+          #   pages/archive/users/
           #
-          # or another directory arrangement.
-          #
-          # Everything is preserved exactly as ArchiveBox generated it.
           # --------------------------------------------------------
-          cp -a archive/. pages/archive/
+          if [ -d "archive/users" ]; then
+
+            echo "Found ArchiveBox snapshot tree:"
+            echo "archive/users"
+
+            cp -a archive/users pages/archive/
+
+          else
+
+            echo
+            echo "ERROR: ArchiveBox users directory was not found."
+            echo
+            echo "Actual archive directory:"
+            find archive -maxdepth 3 -type d | sort
+            echo
+
+            exit 1
+          fi
 
           # --------------------------------------------------------
-          # Remove the two generated root indexes from inside the
-          # nested archive copy.
-          #
-          # The Pages copies are already:
-          #
-          #   pages/index.html
-          #   pages/index.json
-          #
-          # They don't need to exist again as:
-          #
-          #   pages/archive/index.html
-          #   pages/archive/index.json
+          # Verify the Pages copy.
           # --------------------------------------------------------
-          rm -f pages/archive/index.html
-          rm -f pages/archive/index.json
-
           echo
           echo "============================================================"
-          echo " FINAL PAGES STRUCTURE"
+          echo " PAGES STRUCTURE"
           echo "============================================================"
 
           find pages \
-            -maxdepth 7 \
+            -maxdepth 8 \
             -print \
             | sort \
             | head -500
@@ -415,7 +407,6 @@ jobs:
           echo "============================================================"
 
           find pages -type f | wc -l
-
 
       # ============================================================
       # 14. Configure GitHub Pages
