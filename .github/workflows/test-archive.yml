@@ -155,9 +155,6 @@ jobs:
 
       # ============================================================
       # 7. Show EXACT runner filesystem
-      #
-      # This is intentionally before the Pages preparation.
-      # It tells us exactly where ArchiveBox put everything.
       # ============================================================
       - name: Inspect ArchiveBox filesystem
         run: |
@@ -262,12 +259,10 @@ jobs:
       # ============================================================
       # 10. Generate ArchiveBox static index
       #
-      # IMPORTANT:
-      #
       # No BASE_URL.
       # No REPLAY_METHOD.
       #
-      # Let ArchiveBox produce its own static relative links.
+      # Let ArchiveBox generate its own static relative links.
       # ============================================================
       - name: Create static ArchiveBox index
         run: |
@@ -283,7 +278,7 @@ jobs:
 
 
       # ============================================================
-      # 11. Verify generated static index
+      # 11. Verify generated static export
       # ============================================================
       - name: Verify static export
         run: |
@@ -305,7 +300,7 @@ jobs:
       # ============================================================
       # 12. Upload COMPLETE original ArchiveBox data
       #
-      # Nothing is removed or modified for this artifact.
+      # This is the untouched preservation copy.
       # ============================================================
       - name: Upload complete ArchiveBox output
         uses: actions/upload-artifact@v4
@@ -319,9 +314,26 @@ jobs:
       #
       # IMPORTANT:
       #
-      # We DO NOT assume archive/users.
+      # Do NOT assume:
       #
-      # We detect where ArchiveBox actually stored its archive tree.
+      #   archive/users
+      #
+      # Do NOT assume:
+      #
+      #   archive/archive/users
+      #
+      # Instead, preserve the ENTIRE ArchiveBox archive tree.
+      #
+      # Result:
+      #
+      #   pages/
+      #   ├── index.html
+      #   ├── index.json
+      #   └── archive/
+      #       └── [everything from ArchiveBox archive/]
+      #
+      # This preserves whatever directory layout ArchiveBox
+      # actually generated, including users/system/snapshots.
       # ============================================================
       - name: Prepare Pages site
         shell: bash
@@ -333,59 +345,51 @@ jobs:
           echo "============================================================"
 
           rm -rf pages
+
           mkdir -p pages
+          mkdir -p pages/archive
 
           # --------------------------------------------------------
-          # Copy the static indexes.
+          # Copy the generated static indexes.
           # --------------------------------------------------------
           cp archive/index.html pages/index.html
           cp archive/index.json pages/index.json
 
           # --------------------------------------------------------
-          # Detect ArchiveBox's actual storage layout.
+          # IMPORTANT:
           #
-          # Possible layouts include:
+          # Copy the CONTENTS of the ArchiveBox data directory
+          # into pages/archive/.
           #
-          #   archive/users/...
+          # This does not care whether ArchiveBox has:
           #
-          # or:
+          #   users/
+          #   archive/
+          #   crawls/
+          #   snapshots/
           #
-          #   archive/archive/users/...
+          # or another directory arrangement.
           #
-          # We do NOT hard-code a snapshot UUID.
+          # Everything is preserved exactly as ArchiveBox generated it.
           # --------------------------------------------------------
-
-          if [ -d "archive/users" ]; then
-
-            echo "Detected ArchiveBox layout:"
-            echo "    archive/users/"
-
-            mkdir -p pages/archive
-
-            cp -a archive/users pages/archive/
-
-          elif [ -d "archive/archive" ]; then
-
-            echo "Detected ArchiveBox layout:"
-            echo "    archive/archive/"
-
-            cp -a archive/archive pages/
-
-          else
-
-            echo
-            echo "ERROR: Could not locate ArchiveBox archive tree."
-            echo
-            echo "Contents of archive/:"
-            find archive -maxdepth 4 -print | sort | head -500
-            echo
-
-            exit 1
-          fi
+          cp -a archive/. pages/archive/
 
           # --------------------------------------------------------
-          # Show final Pages tree.
+          # Remove the two generated root indexes from inside the
+          # nested archive copy.
+          #
+          # The Pages copies are already:
+          #
+          #   pages/index.html
+          #   pages/index.json
+          #
+          # They don't need to exist again as:
+          #
+          #   pages/archive/index.html
+          #   pages/archive/index.json
           # --------------------------------------------------------
+          rm -f pages/archive/index.html
+          rm -f pages/archive/index.json
 
           echo
           echo "============================================================"
