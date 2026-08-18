@@ -376,6 +376,9 @@ jobs:
       #
       # This is the untouched preservation copy.
       # ============================================================
+      - name: Debug Folder Size
+        run: du -sh ./archive && find ./archive -type f | wc -l
+
       - name: Generate static ArchiveBox files
         run: |
           docker run --rm \
