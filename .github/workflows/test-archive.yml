@@ -377,20 +377,29 @@ jobs:
       # This is the untouched preservation copy.
       # ============================================================
       - name: Generate static ArchiveBox files
-        uses: addnab/docker-run-action@v3
-        with:
-          image: archivebox/archivebox:0.7.3
-          options: -v ${{ github.workspace }}/archive:/data
-          run: |
-            archivebox list --html --with-headers > /data/index.html
-            archivebox list --json --with-headers > /data/index.json
-      
-      - name: Upload static ArchiveBox site
-        uses: actions/upload-artifact@v4
-        with:
-          name: archivebox-static
-          path: archive/
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --html --with-headers > archive/index.html
 
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --json --with-headers > archive/index.json
+      
+      - name: Prepare static ArchiveBox output
+        run: |
+          mkdir -p output
+          mv index.html output/
+          mv index.json output/
+          cp -a archive output/archive
+          
+      - name: Upload to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Point this to the folder containing your output file
+          path: 'output' 
 
 
 
