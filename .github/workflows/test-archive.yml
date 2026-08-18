@@ -388,18 +388,15 @@ jobs:
             my-archivebox \
             list --json --with-headers > archive/index.json
       
-      - name: Prepare static ArchiveBox output
-        run: |
-          mkdir -p output
-          mv index.html output/
-          mv index.json output/
-          cp -a archive output/archive
+           echo "Generated static files:"
+          ls -lh "$GITHUB_WORKSPACE/archive/index.html"
+          ls -lh "$GITHUB_WORKSPACE/archive/index.json"
           
       - name: Upload to Pages
         uses: actions/upload-pages-artifact@v3
         with:
           # Point this to the folder containing your output file
-          path: 'output' 
+          path: 'archive' 
 
 
 
