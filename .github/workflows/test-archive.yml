@@ -376,26 +376,25 @@ jobs:
       #
       # This is the untouched preservation copy.
       # ============================================================
-      - name: Generate static ArchiveBox index
+      - name: Generate static ArchiveBox files
         run: |
           docker run --rm \
-            --user "$(id -u):$(id -g)" \
             -v "${{ github.workspace }}/archive:/data" \
             archivebox/archivebox:latest \
-            list --html --with-headers > "${{ github.workspace }}/index.html"
+            list --html --with-headers > "${{ github.workspace }}/archive/index.html"
       
           docker run --rm \
-            --user "$(id -u):$(id -g)" \
             -v "${{ github.workspace }}/archive:/data" \
             archivebox/archivebox:latest \
-            list --json --with-headers > "${{ github.workspace }}/index.json"
+            list --json --with-headers > "${{ github.workspace }}/archive/index.json"
       
-      - name: Prepare static ArchiveBox output
-        run: |
-          mkdir -p output
-          mv index.html output/
-          mv index.json output/
-          cp -a archive output/archive
+      - name: Upload static ArchiveBox site
+        uses: actions/upload-artifact@v4
+        with:
+          name: archivebox-static
+          path: archive/
+
+
 
 
       # 2. Publish it live to the internet
