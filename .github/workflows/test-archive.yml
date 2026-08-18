@@ -376,17 +376,14 @@ jobs:
       #
       # This is the untouched preservation copy.
       # ============================================================
-      - name: Test ArchiveBox Docker
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}/archive:/data" \
-            archivebox/archivebox:latest \
-            version
-      
-          docker run --rm \
-            -v "${{ github.workspace }}/archive:/data" \
-            archivebox/archivebox:latest \
-            list --help
+      - name: Generate static ArchiveBox files
+        uses: addnab/docker-run-action@v3
+        with:
+          image: archivebox/archivebox:0.7.3
+          options: -v ${{ github.workspace }}/archive:/data
+          run: |
+            archivebox list --html --with-headers > /data/index.html
+            archivebox list --json --with-headers > /data/index.json
       
       - name: Upload static ArchiveBox site
         uses: actions/upload-artifact@v4
