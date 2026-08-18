@@ -376,28 +376,27 @@ jobs:
       #
       # This is the untouched preservation copy.
       # ============================================================
-      - name: Generate static ArchiveBox site
+      - name: Generate static ArchiveBox index
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}/archive:/data" \
+            archivebox/archivebox:latest \
+            list --html --with-headers > "${{ github.workspace }}/index.html"
+      
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -v "${{ github.workspace }}/archive:/data" \
+            archivebox/archivebox:latest \
+            list --json --with-headers > "${{ github.workspace }}/index.json"
+      
+      - name: Prepare static ArchiveBox output
         run: |
           mkdir -p output
-      
-          docker run --rm \
-            -v "${{ github.workspace }}/archive:/data" \
-            -w /data \
-            archivebox/archivebox \
-            list --html --with-headers > output/index.html
-      
-          docker run --rm \
-            -v "${{ github.workspace }}/archive:/data" \
-            -w /data \
-            archivebox/archivebox \
-            list --json --with-headers > output/index.json
-      
+          mv index.html output/
+          mv index.json output/
           cp -a archive output/archive
-       # 1. Upload using the dedicated Pages tool
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: 'output' # Change 'dist' to your folder name
+
 
       # 2. Publish it live to the internet
       - name: Deploy to GitHub Pages
