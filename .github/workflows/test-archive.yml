@@ -379,10 +379,19 @@ jobs:
       - name: Generate static ArchiveBox site
         run: |
           mkdir -p output
-        
-          archivebox --data-dir archive list --html --with-headers > output/index.html
-          archivebox --data-dir archive list --json --with-headers > output/index.json
-        
+      
+          docker run --rm \
+            -v "${{ github.workspace }}/archive:/data" \
+            -w /data \
+            archivebox/archivebox \
+            list --html --with-headers > output/index.html
+      
+          docker run --rm \
+            -v "${{ github.workspace }}/archive:/data" \
+            -w /data \
+            archivebox/archivebox \
+            list --json --with-headers > output/index.json
+      
           cp -a archive output/archive
        # 1. Upload using the dedicated Pages tool
       - name: Upload Pages Artifact
