@@ -376,6 +376,25 @@ jobs:
       #
       # This is the untouched preservation copy.
       # ============================================================
+      - name: Generate static ArchiveBox site
+        run: |
+          mkdir -p output
+        
+          archivebox --data-dir archive list --html --with-headers > output/index.html
+          archivebox --data-dir archive list --json --with-headers > output/index.json
+        
+          cp -a archive output/archive
+       # 1. Upload using the dedicated Pages tool
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'output' # Change 'dist' to your folder name
+
+      # 2. Publish it live to the internet
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        
       - name: Upload complete ArchiveBox output
         uses: actions/upload-artifact@v4
         with:
@@ -383,115 +402,115 @@ jobs:
           path: archive/
 
 
-      # ============================================================
-      # 14. Prepare GitHub Pages
-      #
-      # Actual runner layout:
-      #
-      #   archive/
-      #   ├── logs/
-      #   ├── machines/
-      #   ├── personas/
-      #   ├── sonic/
-      #   ├── sources/
-      #   ├── tmp/
-      #   │
-      #   └── archive/
-      #       └── users/
-      #
-      # The INNER archive/ is the static archive tree.
-      #
-      # Pages:
-      #
-      #   pages/
-      #   ├── index.html
-      #   ├── index.json
-      #   └── archive/
-      #       └── users/
-      #
-      # Internal ArchiveBox runtime directories are NOT published.
-      # ============================================================
-      - name: Prepare Pages site
-        shell: bash
-        run: |
-          set -e
+      # # ============================================================
+      # # 14. Prepare GitHub Pages
+      # #
+      # # Actual runner layout:
+      # #
+      # #   archive/
+      # #   ├── logs/
+      # #   ├── machines/
+      # #   ├── personas/
+      # #   ├── sonic/
+      # #   ├── sources/
+      # #   ├── tmp/
+      # #   │
+      # #   └── archive/
+      # #       └── users/
+      # #
+      # # The INNER archive/ is the static archive tree.
+      # #
+      # # Pages:
+      # #
+      # #   pages/
+      # #   ├── index.html
+      # #   ├── index.json
+      # #   └── archive/
+      # #       └── users/
+      # #
+      # # Internal ArchiveBox runtime directories are NOT published.
+      # # ============================================================
+      # - name: Prepare Pages site
+      #   shell: bash
+      #   run: |
+      #     set -e
 
-          echo "============================================================"
-          echo " PREPARING GITHUB PAGES"
-          echo "============================================================"
+      #     echo "============================================================"
+      #     echo " PREPARING GITHUB PAGES"
+      #     echo "============================================================"
 
-          rm -rf pages
+      #     rm -rf pages
 
-          mkdir -p pages
-          mkdir -p pages/archive
+      #     mkdir -p pages
+      #     mkdir -p pages/archive
 
-          # --------------------------------------------------------
-          # Copy static indexes.
-          # --------------------------------------------------------
-          cp archive/index.html pages/index.html
-          cp archive/index.json pages/index.json
+      #     # --------------------------------------------------------
+      #     # Copy static indexes.
+      #     # --------------------------------------------------------
+      #     cp archive/index.html pages/index.html
+      #     cp archive/index.json pages/index.json
 
-          # --------------------------------------------------------
-          # Copy the actual static ArchiveBox archive.
-          #
-          # Runner:
-          #
-          # archive/archive/users/...
-          #
-          # Pages:
-          #
-          # pages/archive/users/...
-          # --------------------------------------------------------
-          cp -a archive/archive/. pages/archive/
+      #     # --------------------------------------------------------
+      #     # Copy the actual static ArchiveBox archive.
+      #     #
+      #     # Runner:
+      #     #
+      #     # archive/archive/users/...
+      #     #
+      #     # Pages:
+      #     #
+      #     # pages/archive/users/...
+      #     # --------------------------------------------------------
+      #     cp -a archive/archive/. pages/archive/
 
-          # --------------------------------------------------------
-          # Verify.
-          # --------------------------------------------------------
-          echo
-          echo "============================================================"
-          echo " FINAL PAGES STRUCTURE"
-          echo "============================================================"
+      #     # --------------------------------------------------------
+      #     # Verify.
+      #     # --------------------------------------------------------
+      #     echo
+      #     echo "============================================================"
+      #     echo " FINAL PAGES STRUCTURE"
+      #     echo "============================================================"
 
-          find pages \
-            -maxdepth 8 \
-            -print \
-            | sort \
-            | head -500
+      #     find pages \
+      #       -maxdepth 8 \
+      #       -print \
+      #       | sort \
+      #       | head -500
 
-          echo
-          echo "============================================================"
-          echo " PAGES SIZE"
-          echo "============================================================"
+      #     echo
+      #     echo "============================================================"
+      #     echo " PAGES SIZE"
+      #     echo "============================================================"
 
-          du -sh pages
+      #     du -sh pages
 
-          echo
-          echo "============================================================"
-          echo " PAGES FILE COUNT"
-          echo "============================================================"
+      #     echo
+      #     echo "============================================================"
+      #     echo " PAGES FILE COUNT"
+      #     echo "============================================================"
 
-          find pages -type f | wc -l
-
-
-      # ============================================================
-      # 15. Configure GitHub Pages
-      # ============================================================
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+      #     find pages -type f | wc -l
 
 
-      # ============================================================
-      # 16. Upload Pages artifact
-      # ============================================================
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: pages/
+      # # ============================================================
+      # # 15. Configure GitHub Pages
+      # # ============================================================
+      # - name: Configure GitHub Pages
+      #   uses: actions/configure-pages@v5
 
 
-      # ============================================================
-      # 17. Deploy GitHub Pages
-      # ============================================================
-      - name: Deploy GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      # # ============================================================
+      # # 16. Upload Pages artifact
+      # # ============================================================
+      # - name: Upload Pages artifact
+      #   uses: actions/upload-pages-artifact@v4
+      #   with:
+      #     path: pages/
+
+
+      # # ============================================================
+      # # 17. Deploy GitHub Pages
+      # # ============================================================
+      # - name: Deploy GitHub Pages
+      #   id: deployment
+      #   uses: actions/deploy-pages@v4
