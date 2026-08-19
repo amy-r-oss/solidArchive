@@ -379,18 +379,18 @@ jobs:
       - name: Debug Folder Size
         run: du -sh ./archive && find ./archive -type f | wc -l
 
-      - name: Generate static ArchiveBox files
+      - name: Generate static ArchiveBox site
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > archive/index.html
-
+            list --html --with-headers > "$GITHUB_WORKSPACE/index.html"
+      
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json --with-headers > archive/index.json
-      
+            list --json --with-headers > "$GITHUB_WORKSPACE/index.json"
+            
            echo "Generated static files:"
           ls -lh "$GITHUB_WORKSPACE/archive/index.html"
           ls -lh "$GITHUB_WORKSPACE/archive/index.json"
