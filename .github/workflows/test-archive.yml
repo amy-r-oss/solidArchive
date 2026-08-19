@@ -396,7 +396,7 @@ jobs:
       - name: Export static HTML (official method)
         run: |
           # If archivebox-data is your data dir:
-          cd ./archive
+          cd archive/
           archivebox export --html --output ../static_export --public --latest
         # or, without cd:
         # run: archivebox export --html --output ./static_export --data-dir ./archivebox-data --public --latest
