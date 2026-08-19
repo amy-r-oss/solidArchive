@@ -397,13 +397,16 @@ jobs:
       - name: Export static HTML
         run: |
           mkdir -p "$GITHUB_WORKSPACE/static_export"
+            docker run --rm 
+            -v "$GITHUB_WORKSPACE/archive:/data" 
+            --entrypoint /bin/sh my-archivebox -c "archivebox 
+            --version || true; archivebox --help || true; ls -la /usr/local/bin /usr/bin || true"
       
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            -v "$GITHUB_WORKSPACE/static_export:/static_export" \
-            my-archivebox \
-            export --html --output /static_export --public --latest
-            
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       -v "$GITHUB_WORKSPACE/static_export:/static_export" \
+      #       my-archivebox \
+      #       export --html --output /static_export --public --latest
       # - name: Export static HTML (official method)
       #   run: |
       #     # If archivebox-data is your data dir:
