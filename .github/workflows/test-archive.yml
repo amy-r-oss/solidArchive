@@ -394,12 +394,31 @@ jobs:
            echo "Generated static files:"
           ls -lh "$GITHUB_WORKSPACE/archive/index.html"
           ls -lh "$GITHUB_WORKSPACE/archive/index.json"
+
+
+          - name: Prepare GitHub Pages site
+            run: |
+              rm -rf site
+              mkdir -p site
           
-      - name: Upload to Pages
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # Point this to the folder containing your output file
-          path: 'archive' 
+              mv index.html site/
+              mv index.json site/
+          
+              cp -a archive/archive site/archive
+          
+              echo "Pages site:"
+              find site -type f | wc -l
+              du -sh site
+          
+          - name: Upload to GitHub Pages
+            uses: actions/upload-pages-artifact@v3
+            with:
+              path: site/
+      # - name: Upload to Pages
+      #   uses: actions/upload-pages-artifact@v3
+      #   with:
+      #     # Point this to the folder containing your output file
+      #     path: 'archive' 
 
 
 
