@@ -379,46 +379,27 @@ jobs:
       - name: Debug Folder Size
         run: du -sh ./archive && find ./archive -type f | wc -l
 
-      - name: Generate static ArchiveBox site
+      - name: Generate static ArchiveBox files
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > "$GITHUB_WORKSPACE/index.html"
-      
+            list --html --with-headers > archive/index.html
+
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json --with-headers > "$GITHUB_WORKSPACE/index.json"
-            
+            list --json --with-headers > archive/index.json
+      
            echo "Generated static files:"
           ls -lh "$GITHUB_WORKSPACE/archive/index.html"
           ls -lh "$GITHUB_WORKSPACE/archive/index.json"
-
-
-      - name: Prepare GitHub Pages site
-        run: |
-          rm -rf site
-          mkdir -p site
-      
-          mv index.html site/
-          mv index.json site/
-      
-          cp -a archive/archive site/archive
-      
-          echo "Pages site:"
-          find site -type f | wc -l
-          du -sh site
-      
-      - name: Upload to GitHub Pages
+          
+      - name: Upload to Pages
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site/
-      # - name: Upload to Pages
-      #   uses: actions/upload-pages-artifact@v3
-      #   with:
-      #     # Point this to the folder containing your output file
-      #     path: 'archive' 
+          # Point this to the folder containing your output file
+          path: 'archive' 
 
 
 
