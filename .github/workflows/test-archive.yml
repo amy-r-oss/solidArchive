@@ -397,7 +397,7 @@ jobs:
         run: |
           # If archivebox-data is your data dir:
           cd archive/
-          archivebox export --html --output ../static_export --public --latest
+          my-archivebox export --html --output ../static_export --public --latest
         # or, without cd:
         # run: archivebox export --html --output ./static_export --data-dir ./archivebox-data --public --latest
           
