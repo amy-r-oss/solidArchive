@@ -256,15 +256,29 @@ jobs:
             | tail -200 || true
 
 
-      # ============================================================
-      # 10. Generate ArchiveBox static index
-      #
-      # This is the documented ArchiveBox static export method.
-      #
-      # The generated index is placed next to the ArchiveBox
-      # archive/ directory.
-      # ============================================================
-      - name: Create static ArchiveBox index
+      # # ============================================================
+      # # 10. Generate ArchiveBox static index
+      # #
+      # # This is the documented ArchiveBox static export method.
+      # #
+      # # The generated index is placed next to the ArchiveBox
+      # # archive/ directory.
+      # # ============================================================
+      # - name: Create static ArchiveBox index
+      #   run: |
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       my-archivebox \
+      #       list --html --with-headers > archive/index.html
+
+      #     docker run --rm \
+      #       -v "$GITHUB_WORKSPACE/archive:/data" \
+      #       my-archivebox \
+      #       list --json --with-headers > archive/index.json
+      - name: Debug Folder Size
+        run: du -sh ./archive && find ./archive -type f | wc -l
+
+      - name: Generate static ArchiveBox files
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
@@ -275,7 +289,10 @@ jobs:
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             list --json --with-headers > archive/index.json
-
+      
+           echo "Generated static files:"
+          ls -lh "$GITHUB_WORKSPACE/archive/index.html"
+          ls -lh "$GITHUB_WORKSPACE/archive/index.json"
 
       # ============================================================
       # 11. DIAGNOSTIC:
@@ -376,24 +393,6 @@ jobs:
       #
       # This is the untouched preservation copy.
       # ============================================================
-      - name: Debug Folder Size
-        run: du -sh ./archive && find ./archive -type f | wc -l
-
-      - name: Generate static ArchiveBox files
-        run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            list --html --with-headers > archive/index.html
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            list --json --with-headers > archive/index.json
-      
-           echo "Generated static files:"
-          ls -lh "$GITHUB_WORKSPACE/archive/index.html"
-          ls -lh "$GITHUB_WORKSPACE/archive/index.json"
 
           
       - name: Upload complete ArchiveBox output
