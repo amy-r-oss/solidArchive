@@ -399,7 +399,7 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           # Point this to the folder containing your output file
-          path: 'archive' 
+          path: 'archive/' 
 
 
 
