@@ -395,10 +395,11 @@ jobs:
           ls -lh "$GITHUB_WORKSPACE/archive/index.html"
           ls -lh "$GITHUB_WORKSPACE/archive/index.json"
           
-      - name: Prepare Pages artifact
+      - name: Upload to Pages
         uses: actions/upload-pages-artifact@v3
         with:
-          path: archive/
+          # Point this to the folder containing your output file
+          path: 'archive' 
 
 
 
