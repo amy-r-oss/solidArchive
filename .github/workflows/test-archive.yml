@@ -394,6 +394,14 @@ jobs:
            echo "Generated static files:"
           ls -lh "$GITHUB_WORKSPACE/archive/index.html"
           ls -lh "$GITHUB_WORKSPACE/archive/index.json"
+
+          
+      - name: Upload complete ArchiveBox output
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-test-output
+          path: archive/
+
           
       - name: Upload to Pages
         uses: actions/upload-pages-artifact@v3
@@ -408,11 +416,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
         
-      - name: Upload complete ArchiveBox output
-        uses: actions/upload-artifact@v4
-        with:
-          name: archive-test-output
-          path: archive/
+      
 
 
       # # ============================================================
