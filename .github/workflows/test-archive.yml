@@ -8,6 +8,12 @@ on:
         required: true
         type: string
 
+# Required permissions for Pages deployment step
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
   archive:
     runs-on: ubuntu-latest
@@ -24,7 +30,7 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
 
-      - name: Run ArchiveBox
+      - name: Run ArchiveBox (init + add URL)
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
@@ -35,18 +41,29 @@ jobs:
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             add "${{ inputs.url }}"
-        
 
-      - name: Show result
+      - name: Export static HTML for GitHub Pages (ArchiveBox recommended method)
         run: |
-          find archive -maxdepth 4 -type f | sort
-      # - name: Diagnose archive
-      #   run: |
-      #     du -sh archive
-      #     find archive -type f | head -100
-      #     echo "ERRORS:"
-      #     cat archive/logs/errors.log || true
-          
+          # ArchiveBox v0.9.x: produce a static HTML site into /data/output_static
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            export --html --output /data/output_static
+
+      - name: Show exported files
+        run: |
+          echo "Exported static files:"
+          find archive/output_static -maxdepth 4 -type f | sort || true
+
+      - name: Upload static site artifact for Pages
+        uses: actions/upload-pages-artifact@v1
+        with:
+          path: archive/output_static
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v1
+
+      # Keep the original test output artifact for debugging
       - name: Upload test output
         uses: actions/upload-artifact@v4
         with:
