@@ -279,6 +279,11 @@ jobs:
             my-archivebox \
             list --json --with-headers > archive/index.json
 
+          docker run --rm \
+            -v "${{ github.workspace }}/archive:/data" \
+            -v "${{ github.workspace }}/static_export:/static_export" \
+            my-archivebox export --html --output /static_export --public --latest
+
       # - name: Generate static ArchiveBox files
       #   run: |
       #     docker run --rm \
@@ -394,12 +399,12 @@ jobs:
       #
       # This is the untouched preservation copy.
           # ============================================================
-      - name: Export static HTML
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}/archive:/data" \
-            -v "${{ github.workspace }}/static_export:/static_export" \
-            my-archivebox export --html --output /static_export --public --latest
+      # - name: Export static HTML
+      #   run: |
+      #     docker run --rm \
+      #       -v "${{ github.workspace }}/archive:/data" \
+      #       -v "${{ github.workspace }}/static_export:/static_export" \
+      #       my-archivebox export --html --output /static_export --public --latest
 
             
         # mkdir -p "$GITHUB_WORKSPACE/static_export"
