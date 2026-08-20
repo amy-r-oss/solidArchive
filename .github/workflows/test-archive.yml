@@ -8,9 +8,8 @@ on:
         required: true
         type: string
 
-# Required permissions for Pages deployment step
 permissions:
-  contents: read
+  contents: write     # needed to push gh-pages branch
   pages: write
   id-token: write
 
@@ -21,6 +20,8 @@ jobs:
     steps:
       - name: Checkout this exact fork/commit
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Build ArchiveBox from this source
         run: |
@@ -44,7 +45,6 @@ jobs:
 
       - name: Export static HTML for GitHub Pages (ArchiveBox recommended method)
         run: |
-          # ArchiveBox v0.9.x: produce a static HTML site into /data/output_static
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
@@ -55,16 +55,43 @@ jobs:
           echo "Exported static files:"
           find archive/output_static -maxdepth 4 -type f | sort || true
 
-      - name: Upload static site artifact for Pages
-        uses: actions/upload-pages-artifact@v1
-        with:
-          path: archive/output_static
+      - name: Publish output_static to gh-pages branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
 
-      - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v1
+          # configure git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-      # Keep the original test output artifact for debugging
-      - name: Upload test output
+          # go to workspace root (actions/checkout checked out the repo)
+          cd "$GITHUB_WORKSPACE"
+
+          # create a temporary directory and copy static files there
+          TMPDIR="$(mktemp -d)"
+          cp -R archive/output_static/* "$TMPDIR"/ || true
+
+          # switch to an orphan branch gh-pages and put the static files there
+          git fetch origin
+          git checkout --orphan gh-pages || git checkout gh-pages || true
+          # remove all files from the index (safe even if branch didn't exist)
+          git rm -rf . || true
+
+          # copy files from tmpdir into repo root
+          cp -R "$TMPDIR"/* .
+
+          # ensure an index.html exists (ArchiveBox produces one)
+          if [ ! -f index.html ]; then
+            echo "Warning: no index.html found in exported static site"
+          fi
+
+          # commit and force-push gh-pages
+          git add -A
+          git commit -m "Publish ArchiveBox export to gh-pages [skip ci]" || true
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: Upload test output (full archive) for debugging
         uses: actions/upload-artifact@v4
         with:
           name: archive-test-output
