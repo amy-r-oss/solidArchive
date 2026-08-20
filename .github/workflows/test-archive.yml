@@ -397,9 +397,9 @@ jobs:
       - name: Export static HTML
         run: |
           docker run --rm \
-          -v "${{ github.workspace }}/archive:/data" \
-          -v "${{ github.workspace }}/static_export:/static_export" \
-          my-archivebox archivebox export --html --output /static_export --public --latest
+            -v "${{ github.workspace }}/archive:/data" \
+            -v "${{ github.workspace }}/static_export:/static_export" \
+            my-archivebox export --html --output /static_export --public --latest
 
             
         # mkdir -p "$GITHUB_WORKSPACE/static_export"
