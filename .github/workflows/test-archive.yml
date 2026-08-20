@@ -222,12 +222,11 @@ jobs:
             my-archivebox \
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
       
-          docker run --rm \
-            -v "${{ github.workspace }}/archive:/data" \
-            -v "${{ github.workspace }}/static_export:/static_export" \
-            --entrypoint /bin/sh \
-            my-archivebox \
-            -c "archivebox export --html --output /static_export --data-dir /data --public --latest"
+          docker run --rm --entrypoint /bin/sh my-archivebox -c "
+            echo '=== which/archivebox ===' && which archivebox || true
+            echo '=== version/help (first 200 lines) ===' && archivebox --version || true && archivebox --help | head -n 200 || true
+            echo '=== ls bins ===' && ls -la /usr/local/bin /usr/bin /bin || true
+          "
 
 
       # - name: Generate static ArchiveBox files
