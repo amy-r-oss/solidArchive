@@ -209,20 +209,25 @@ jobs:
         
       - name: Create static ArchiveBox index
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/archive"
+          mkdir -p "$GITHUB_WORKSPACE/static_export"
+      
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > archive/index.html
-
+            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
+      
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json --with-headers > archive/index.json
-
+            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
+      
           docker run --rm \
-            -v "${{ github.workspace }}/archive:/data" \
-            -v "${{ github.workspace }}/static_export:/static_export" \
-            my-archivebox export --html --output /static_export --public --latest
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -v "$GITHUB_WORKSPACE/static_export:/static_export" \
+            my-archivebox \
+            export --html --output /static_export --public --latest
+
 
       # - name: Generate static ArchiveBox files
       #   run: |
