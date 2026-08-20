@@ -223,10 +223,11 @@ jobs:
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
       
           docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            -v "$GITHUB_WORKSPACE/static_export:/static_export" \
+            -v "${{ github.workspace }}/archive:/data" \
+            -v "${{ github.workspace }}/static_export:/static_export" \
+            --entrypoint /bin/sh \
             my-archivebox \
-            export --html --output /static_export --public --latest
+            -c "archivebox export --html --output /static_export --data-dir /data --public --latest"
 
 
       # - name: Generate static ArchiveBox files
