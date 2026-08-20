@@ -73,75 +73,15 @@ jobs:
         env:
           ARCHIVE_URL: ${{ inputs.url }}
         run: |
-          set +e
-
-          MAX_ATTEMPTS=3
-          ATTEMPT=1
-
-          while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ]; do
-
-            echo
-            echo "============================================================"
-            echo " ArchiveBox attempt $ATTEMPT / $MAX_ATTEMPTS"
-            echo "============================================================"
-            echo
-
-            CONTAINER_NAME="archivebox-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${ATTEMPT}"
-
-            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-
-            timeout --signal=TERM --kill-after=15s 30m \
-              docker run \
-                --name "$CONTAINER_NAME" \
-                --init \
-                -v "$GITHUB_WORKSPACE/archive:/data" \
-                -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-                -e YTDLP_ENABLED=true \
-                -e YTDLP_BINARY=yt-dlp \
-                -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-                my-archivebox \
-                add "$ARCHIVE_URL"
-
-            EXIT_CODE=$?
-
-            echo
-            echo "ArchiveBox exit code: $EXIT_CODE"
-
-            if [ "$EXIT_CODE" -eq 0 ]; then
-
-              echo
-              echo "ArchiveBox completed successfully."
-              echo
-
-              docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
-
-              exit 0
-            fi
-
-            echo
-            echo "WARNING: ArchiveBox attempt $ATTEMPT failed."
-            echo "Cleaning up container..."
-            echo
-
-            docker stop -t 5 "$CONTAINER_NAME" \
-              >/dev/null 2>&1 || true
-
-            docker rm -f "$CONTAINER_NAME" \
-              >/dev/null 2>&1 || true
-
-            sleep 3
-
-            if [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; then
-              echo "Retrying with a fresh ArchiveBox container..."
-              sleep 5
-            fi
-
-            ATTEMPT=$((ATTEMPT + 1))
-          done
-
-          echo
-          echo "ArchiveBox failed after $MAX_ATTEMPTS attempts."
-          exit 1
+          docker run --rm \
+            --init \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            -e YTDLP_ENABLED=true \
+            -e YTDLP_BINARY=yt-dlp \
+            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            my-archivebox \
+            add "$ARCHIVE_URL"
 
 
       # ============================================================
