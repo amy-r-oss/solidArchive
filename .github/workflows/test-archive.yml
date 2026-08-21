@@ -92,57 +92,53 @@ jobs:
           echo "Exported static files (sample):"
           find archive/output_static -maxdepth 6 -type f | sort | head -200 || true
 
-      - name: Publish output_static to gh-pages branch
+      - name: Publish static site to gh-pages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
-
+          set -euo pipefail
+      
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
+      
           cd "$GITHUB_WORKSPACE"
-
-          TMPDIR="$(mktemp -d)"
-          cp -R archive/output_static/* "$TMPDIR"/ || true
-
+      
           git fetch origin
-          if git show-ref --quiet refs/heads/gh-pages; then
-            git checkout gh-pages
-            git rm -rf . || true
+      
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git checkout -B gh-pages origin/gh-pages
           else
             git checkout --orphan gh-pages
             git rm -rf . || true
           fi
-
-          cp -R "$TMPDIR"/* .
-
-          # ensure .nojekyll exists to prevent Jekyll processing
-          if [ ! -f .nojekyll ]; then
-            touch .nojekyll
+      
+          # Remove EVERYTHING currently on gh-pages.
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name .git \
+            -exec rm -rf {} +
+      
+          # Copy ONLY the prepared static site.
+          cp -a "$GITHUB_WORKSPACE/static_site/." .
+      
+          touch .nojekyll
+      
+          echo "=== Files being published ==="
+          find . -maxdepth 4 -type f | sort | head -300
+      
+          echo "=== Checking for unwanted ArchiveBox runtime directories ==="
+          if find . -maxdepth 1 -type d \
+            \( -name lib -o -name machines -o -name machine -o -name logs \) \
+            | grep -q .; then
+            echo "ERROR: ArchiveBox runtime directories found at site root"
+            exit 1
           fi
-
-          # final safeguard: remove any leftover runtime files before commit
-          rm -rf tmp logs lib machines binaries sonic || true
-          rm -f ArchiveBox.conf stdout.log || true
-          find . -type f -name "*.sqlite3" -delete || true
-          find . -type f -name "*.log" -delete || true
-          find . -type f -name "*.lock" -delete || true
-          find . -type f -name "*.pid" -delete || true
-          find . -type f -name "*.sh" -delete || true
-          find . -type f -name "*.exe" -delete || true
-          find . -type f -name "*.bin" -delete || true
-          find . -path "./**/ublock/*" -prune -exec rm -rf {} + || true
-          find . -path "./**/responses/*" -prune -exec rm -rf {} + || true
-
-          if [ ! -f index.html ]; then
-            echo "Warning: no index.html found in exported static site"
-          fi
-
+      
           git add -A
-          git commit -m "Publish ArchiveBox export to gh-pages [skip ci]" || true
-          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
-
+          git commit -m "Publish ArchiveBox static site [skip ci]" || true
+          git push --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" \
+            gh-pages
+      
       - name: Upload test output (full archive) for debugging
         uses: actions/upload-artifact@v4
         with:
