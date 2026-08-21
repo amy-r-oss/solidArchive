@@ -54,6 +54,8 @@ jobs:
             if archivebox --help | grep -q "\bexport\b"; then
               echo "Using archivebox export --html --output"
               archivebox export --html --output /data/output_static
+              # ensure .nojekyll so GitHub Pages doesn't run Jekyll
+              touch /data/output_static/.nojekyll
               exit 0
             fi
 
@@ -61,6 +63,7 @@ jobs:
             if archivebox --help | grep -q "\bstatic\b"; then
               echo "Using archivebox static --output"
               archivebox static --output /data/output_static
+              touch /data/output_static/.nojekyll
               exit 0
             fi
 
@@ -68,12 +71,10 @@ jobs:
             echo "Falling back to list --html method"
             archivebox list --html --with-headers > /data/output_static/index.html
 
-            # Mirror collection files into output_static so links resolve
-            # Exclude the output dir itself and common large files/databases
+            # mirror collection files into output_static so links resolve
             if command -v rsync >/dev/null 2>&1; then
               rsync -a --delete --exclude='output_static' --exclude='db.sqlite3' --exclude='index.html' --exclude='archivebox.log' /data/ /data/output_static/
             else
-              # cp fallback
               for p in /data/*; do
                 [ "$p" = "/data/output_static" ] && continue
                 case "$(basename "$p")" in
@@ -82,6 +83,9 @@ jobs:
                 cp -a "$p" /data/output_static/ || true
               done
             fi
+
+            # disable Jekyll processing on GitHub Pages
+            touch /data/output_static/.nojekyll
 
             if [ ! -f /data/output_static/index.html ]; then
               echo "ERROR: index.html not generated"
@@ -94,8 +98,8 @@ jobs:
 
       - name: Show exported files
         run: |
-          echo "Exported static files:"
-          find archive/output_static -maxdepth 6 -type f | sort || true
+          echo "Exported static files (sample):"
+          find archive/output_static -maxdepth 6 -type f | sort | head -200 || true
 
       - name: Publish output_static to gh-pages branch
         env:
@@ -121,6 +125,11 @@ jobs:
           fi
 
           cp -R "$TMPDIR"/* .
+
+          # ensure .nojekyll exists to prevent Jekyll processing
+          if [ ! -f .nojekyll ]; then
+            touch .nojekyll
+          fi
 
           if [ ! -f index.html ]; then
             echo "Warning: no index.html found in exported static site"
