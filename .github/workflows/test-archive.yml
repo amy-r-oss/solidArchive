@@ -40,12 +40,19 @@ jobs:
             my-archivebox \
             init --install
 
-      - name: Add URL to ArchiveBox
+      - name: Add URL and run worker to create snapshots
         run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            add "${{ inputs.url }}"
+          # Add the URL and run the worker to produce snapshots (process queue).
+          # We run both inside the container; run may take some time depending on the target.
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc "
+            set -euo pipefail
+            echo 'Adding URL to archive...'
+            archivebox add '${{ inputs.url }}'
+            echo 'Running archivebox worker to process queue (this may take a while)...'
+            # 'run' will process queued work. Use a short / reasonable timeout if desired.
+            archivebox run --max-workers=2 || true
+            echo 'Worker finished (or timed out).'
+          "
 
       - name: Create output_static directory (host-side)
         run: |
@@ -54,20 +61,23 @@ jobs:
       - name: Generate static site inside container (export/static/list --html fallback)
         run: |
           # Run inside the container to produce static files at /data/output_static
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc " \
-            set -euo pipefail; \
-            mkdir -p /data/output_static; \
-            if archivebox --help | grep -q export; then \
-              echo 'Using archivebox export --html --output'; \
-              archivebox export --html --output /data/output_static || true; \
-            elif archivebox --help | grep -q static; then \
-              echo 'Using archivebox static --output'; \
-              archivebox static --output /data/output_static || true; \
-            else \
-              echo 'Falling back to list --html method'; \
-              archivebox list --html --with-headers > /data/output_static/index.html || true; \
-            fi; \
-            touch /data/output_static/.nojekyll || true; \
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc "
+            set -euo pipefail
+            mkdir -p /data/output_static
+
+            if archivebox --help | grep -q export; then
+              echo 'Using archivebox export --html --output'
+              archivebox export --html --output /data/output_static || true
+            elif archivebox --help | grep -q static; then
+              echo 'Using archivebox static --output'
+              archivebox static --output /data/output_static || true
+            else
+              echo 'Falling back to list --html method'
+              archivebox list --html --with-headers > /data/output_static/index.html || true
+            fi
+
+            # ensure .nojekyll so GitHub Pages won't run Jekyll
+            touch /data/output_static/.nojekyll || true
           "
 
       - name: Mirror collection into output_static (runner-side) and clean runtime files
@@ -108,7 +118,7 @@ jobs:
           find "$DST" -type f -name "*.pid" -delete || true
           rm -f "$DST/ArchiveBox.conf" "$DST/stdout.log" || true
 
-          # Ensure .nojekyll present
+          # ensure .nojekyll present
           touch "$DST/.nojekyll"
 
           echo "Assembled static site at $DST (sample):"
