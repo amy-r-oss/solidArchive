@@ -23,63 +23,61 @@ jobs:
         with:
           persist-credentials: true
 
+      - name: Prepare empty archive directory
+        run: |
+          # Ensure a clean data directory so `archivebox init` won't fail
+          rm -rf "$GITHUB_WORKSPACE/archive"
+          mkdir -p "$GITHUB_WORKSPACE/archive"
+
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
 
-      - name: Create archive directory
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/archive"
-          # ensure output dir exists on host so container mount has it
-          mkdir -p "$GITHUB_WORKSPACE/archive/output_static"
-
-      - name: Run ArchiveBox (init + add URL)
+      - name: Run ArchiveBox init
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
 
+      - name: Add URL to ArchiveBox
+        run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Generate static site inside container (no rsync here)
+      - name: Create output_static directory (host-side)
         run: |
-          # run ArchiveBox inside container to produce index or static export into /data/output_static
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc "
-            set -euo pipefail
-            mkdir -p /data/output_static
+          mkdir -p "$GITHUB_WORKSPACE/archive/output_static"
 
-            if archivebox --help | grep -q \"export\"; then
-              echo 'Using archivebox export --html --output'
-              archivebox export --html --output /data/output_static || true
-              touch /data/output_static/.nojekyll || true
-              exit 0
-            fi
-
-            if archivebox --help | grep -q \"static\"; then
-              echo 'Using archivebox static --output'
-              archivebox static --output /data/output_static || true
-              touch /data/output_static/.nojekyll || true
-              exit 0
-            fi
-
-            echo 'Falling back to list --html method'
-            archivebox list --html --with-headers > /data/output_static/index.html || true
-            touch /data/output_static/.nojekyll || true
+      - name: Generate static site inside container (export/static/list --html fallback)
+        run: |
+          # Run inside the container to produce static files at /data/output_static
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc " \
+            set -euo pipefail; \
+            mkdir -p /data/output_static; \
+            if archivebox --help | grep -q export; then \
+              echo 'Using archivebox export --html --output'; \
+              archivebox export --html --output /data/output_static || true; \
+            elif archivebox --help | grep -q static; then \
+              echo 'Using archivebox static --output'; \
+              archivebox static --output /data/output_static || true; \
+            else \
+              echo 'Falling back to list --html method'; \
+              archivebox list --html --with-headers > /data/output_static/index.html || true; \
+            fi; \
+            touch /data/output_static/.nojekyll || true; \
           "
 
-      - name: Mirror collection into output_static (host-side) and clean runtime files
+      - name: Mirror collection into output_static (runner-side) and clean runtime files
         run: |
           set -euo pipefail
 
           SRC="$GITHUB_WORKSPACE/archive/"
           DST="$GITHUB_WORKSPACE/archive/output_static/"
 
-          # Use rsync on the runner side (avoid container-side rsync/permission issues).
-          # Exclude runtime and large/install directories that break Pages packaging.
+          # Use runner-side rsync to copy files with reliable permissions handling.
           rsync -a --delete \
             --exclude='output_static' \
             --exclude='*.sqlite3' \
@@ -100,9 +98,9 @@ jobs:
             --exclude='*.log' \
             --exclude='*.lock' \
             --exclude='*.pid' \
-            \"$SRC\" \"$DST\"
+            "$SRC" "$DST"
 
-          # Aggressive cleanup: ensure nothing runtime-like remains
+          # Aggressive cleanup: ensure no runtime/install artifacts remain
           rm -rf "$DST/tmp" "$DST/logs" "$DST/lib" "$DST/machines" "$DST/binaries" "$DST/sonic" || true
           find "$DST" -type f -name "*.sqlite3" -delete || true
           find "$DST" -type f -name "*.log" -delete || true
@@ -110,12 +108,21 @@ jobs:
           find "$DST" -type f -name "*.pid" -delete || true
           rm -f "$DST/ArchiveBox.conf" "$DST/stdout.log" || true
 
-          # ensure .nojekyll present
+          # Ensure .nojekyll present
           touch "$DST/.nojekyll"
 
           echo "Assembled static site at $DST (sample):"
           find "$DST" -maxdepth 3 -type f | head -200 || true
           du -sh "$DST" || true
+
+      - name: Verify static index exists
+        run: |
+          if [ ! -f "$GITHUB_WORKSPACE/archive/output_static/index.html" ]; then
+            echo "ERROR: output_static/index.html not found. Listing output_static:"
+            ls -la "$GITHUB_WORKSPACE/archive/output_static" || true
+            exit 2
+          fi
+          echo "Found index.html, proceeding."
 
       - name: Show exported files (sample)
         run: |
