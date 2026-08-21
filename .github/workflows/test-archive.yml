@@ -43,101 +43,50 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Generate static site (detect export/static; fallback to list --html) and clean runtime files
+      - name: Generate static site
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc '
-            set -euo pipefail
-
-            mkdir -p /data/output_static
-
-            # Prefer new export CLI if present
-            if archivebox --help | grep -q "\bexport\b"; then
-              echo "Using archivebox export --html --output"
-              archivebox export --html --output /data/output_static
-              touch /data/output_static/.nojekyll
-              exit 0
-            fi
-
-            # Fall back to `static` if present
-            if archivebox --help | grep -q "\bstatic\b"; then
-              echo "Using archivebox static --output"
-              archivebox static --output /data/output_static
-              touch /data/output_static/.nojekyll
-              exit 0
-            fi
-
-            # Final fallback: generate a static index with list --html and mirror files
-            echo "Falling back to list --html method"
-            archivebox list --html --with-headers > /data/output_static/index.html
-
-            # Mirror collection files into output_static so links resolve.
-            # Exclude known runtime or large paths that must not be published.
-            if command -v rsync >/dev/null 2>&1; then
-              rsync -a --delete \
-                --exclude=output_static \
-                --exclude=db.sqlite3 \
-                --exclude=index.sqlite3 \
-                --exclude='*.sqlite3' \
-                --exclude=tmp \
-                --exclude=tmp/** \
-                --exclude=logs \
-                --exclude=logs/** \
-                --exclude=lib \
-                --exclude=lib/** \
-                --exclude=machines \
-                --exclude=machines/** \
-                --exclude=sonic \
-                --exclude=sonic/** \
-                --exclude=binaries \
-                --exclude=binaries/** \
-                --exclude=ArchiveBox.conf \
-                --exclude=stdout.log \
-                --exclude='*.log' \
-                --exclude='*.lock' \
-                --exclude='*.pid' \
-                --exclude='**/ublock' \
-                --exclude='**/ublock/**' \
-                --exclude='**/responses' \
-                --exclude='**/responses/**' \
-                --exclude='**/*.sh' \
-                --exclude='**/*.exe' \
-                --exclude='**/*.bin' \
-                /data/ /data/output_static/
-            else
-              for p in /data/*; do
-                [ "$p" = "/data/output_static" ] && continue
-                case "$(basename "$p")" in
-                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|sonic|binaries|ArchiveBox.conf|stdout.log|*.log|*.lock|*.pid) continue ;;
-                esac
-                cp -a "$p" /data/output_static/ || true
-              done
-            fi
-
-            # remove any leftover runtime files/directories that could break packaging
-            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib /data/output_static/machines /data/output_static/binaries /data/output_static/sonic || true
-            find /data/output_static -type f -name "*.sqlite3" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.log" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.lock" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.pid" -exec rm -f {} + || true
-            rm -f /data/output_static/ArchiveBox.conf /data/output_static/stdout.log || true
-            # remove ublock/responses artifacts if any slipped through
-            rm -rf /data/output_static/**/ublock /data/output_static/**/responses || true
-            find /data/output_static -type f -name "*.sh" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.exe" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.bin" -exec rm -f {} + || true
-
-            # disable Jekyll processing on GitHub Pages
-            touch /data/output_static/.nojekyll
-
-            if [ ! -f /data/output_static/index.html ]; then
-              echo "ERROR: index.html not generated"
-              exit 2
-            fi
-
-            echo "Static site assembled and cleaned at /data/output_static"
-            du -sh /data/output_static || true
-          '
-
+          set -euo pipefail
+      
+          rm -rf "$GITHUB_WORKSPACE/static_site"
+          mkdir -p "$GITHUB_WORKSPACE/static_site"
+      
+          # Generate the static index.
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            --entrypoint archivebox \
+            my-archivebox \
+            list --html --with-headers \
+            > "$GITHUB_WORKSPACE/static_site/index.html"
+      
+          # The ArchiveBox index references files under ./archive/.
+          # Copy ONLY the archive content, not the ArchiveBox runtime/data directory.
+          cp -a "$GITHUB_WORKSPACE/archive/archive" \
+                "$GITHUB_WORKSPACE/static_site/archive"
+      
+          # Remove ArchiveBox plugin/runtime artifacts recursively.
+          find "$GITHUB_WORKSPACE/static_site/archive" \
+            -type d -name 'ublock' \
+            -prune -exec rm -rf {} +
+      
+          find "$GITHUB_WORKSPACE/static_site/archive" \
+            -type d -name 'responses' \
+            -prune -exec rm -rf {} +
+      
+          # Remove executable/script artifacts recursively.
+          find "$GITHUB_WORKSPACE/static_site/archive" \
+            -type f \( \
+              -name '*.sh' -o \
+              -name '*.exe' -o \
+              -name '*.bin' \
+            \) -delete
+      
+          touch "$GITHUB_WORKSPACE/static_site/.nojekyll"
+      
+          echo "=== Static site ==="
+          find "$GITHUB_WORKSPACE/static_site" -maxdepth 3 -print
+          echo "=== Size ==="
+          du -sh "$GITHUB_WORKSPACE/static_site"
+          
       - name: Show exported files (sample)
         run: |
           echo "Exported static files (sample):"
