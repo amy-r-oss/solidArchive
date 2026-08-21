@@ -1,3 +1,45 @@
+name: Test Archive
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL to archive"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout this exact fork/commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Prepare empty archive directory
+        run: |
+          # Ensure a clean data directory so `archivebox init` won't fail
+          rm -rf "$GITHUB_WORKSPACE/archive"
+          mkdir -p "$GITHUB_WORKSPACE/archive"
+
+      - name: Build ArchiveBox from this source
+        run: |
+          docker build -t my-archivebox .
+
+      - name: Run ArchiveBox init
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            init --install
+
       - name: Add URL and run worker with polling (generate index or diagnostics)
         run: |
           set -euo pipefail
@@ -115,3 +157,63 @@
             exit 2
           fi
           echo "Found index.html, proceeding."
+      - name: Show exported files (sample)
+        run: |
+          echo "Exported static files (sample):"
+          find archive/output_static -maxdepth 6 -type f | sort | head -200 || true
+
+      - name: Publish output_static to gh-pages branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          cd "$GITHUB_WORKSPACE"
+
+          TMPDIR="$(mktemp -d)"
+          cp -R archive/output_static/* "$TMPDIR"/ || true
+
+          git fetch origin
+          if git show-ref --quiet refs/heads/gh-pages; then
+            git checkout gh-pages
+            git rm -rf . || true
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . || true
+          fi
+
+          cp -R "$TMPDIR"/* .
+
+          # ensure .nojekyll exists to prevent Jekyll processing
+          if [ ! -f .nojekyll ]; then
+            touch .nojekyll
+          fi
+
+          # final safeguard: remove any leftover runtime files before commit
+          find . -type d -name lib -prune -exec rm -rf {} + || true
+          find . -type d -name machines -prune -exec rm -rf {} + || true
+          find . -type d -name sonic -prune -exec rm -rf {} + || true
+          find . -type d -name binaries -prune -exec rm -rf {} + || true
+          rm -rf tmp logs || true
+          rm -f ArchiveBox.conf stdout.log || true
+          find . -type f -name "*.sqlite3" -delete || true
+          find . -type f -name "*.log" -delete || true
+          find . -type f -name "*.lock" -delete || true
+          find . -type f -name "*.pid" -delete || true
+
+          if [ ! -f index.html ]; then
+            echo "Warning: no index.html found in exported static site"
+          fi
+
+          git add -A
+          git commit -m "Publish ArchiveBox export to gh-pages [skip ci]" || true
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: Upload test output (full archive) for debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-test-output
+          path: archive/
