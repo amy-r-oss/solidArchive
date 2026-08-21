@@ -86,27 +86,33 @@ jobs:
                 --exclude=lib/** \
                 --exclude=machines \
                 --exclude=machines/** \
+                --exclude=sonic \
+                --exclude=sonic/** \
                 --exclude=binaries \
                 --exclude=binaries/** \
-                --exclude='**/*.lock' \
-                --exclude='**/*.pid' \
-                --exclude='archivebox.log' \
+                --exclude=ArchiveBox.conf \
+                --exclude=stdout.log \
+                --exclude='*.log' \
+                --exclude='*.pid' \
+                --exclude='*.lock' \
                 /data/ /data/output_static/
             else
               for p in /data/*; do
                 [ "$p" = "/data/output_static" ] && continue
                 case "$(basename "$p")" in
-                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|binaries|archivebox.log) continue ;;
+                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|sonic|binaries|ArchiveBox.conf|stdout.log|*.log) continue ;;
                 esac
                 cp -a "$p" /data/output_static/ || true
               done
             fi
 
             # remove any leftover runtime files/directories that could break packaging
-            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib /data/output_static/machines /data/output_static/binaries || true
+            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib /data/output_static/machines /data/output_static/binaries /data/output_static/sonic || true
             find /data/output_static -type f -name "*.sqlite3" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.log" -exec rm -f {} + || true
             find /data/output_static -type f -name "*.lock" -exec rm -f {} + || true
             find /data/output_static -type f -name "*.pid" -exec rm -f {} + || true
+            rm -f /data/output_static/ArchiveBox.conf /data/output_static/stdout.log || true
 
             # disable Jekyll processing on GitHub Pages
             touch /data/output_static/.nojekyll
@@ -156,8 +162,10 @@ jobs:
           fi
 
           # final safeguard: remove any leftover runtime files before commit
-          rm -rf tmp logs lib machines binaries || true
+          rm -rf tmp logs lib machines binaries sonic sonic* || true
+          rm -f ArchiveBox.conf stdout.log || true
           find . -type f -name "*.sqlite3" -delete || true
+          find . -type f -name "*.log" -delete || true
           find . -type f -name "*.lock" -delete || true
           find . -type f -name "*.pid" -delete || true
 
