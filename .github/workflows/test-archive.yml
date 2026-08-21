@@ -43,60 +43,55 @@ jobs:
       - name: Add URL and run worker with polling (generate index or diagnostics)
         run: |
           set -euo pipefail
-          # ensure output dir exists on host
+
           mkdir -p "$GITHUB_WORKSPACE/archive/output_static"
           mkdir -p "$GITHUB_WORKSPACE/archive/output_static/debug"
 
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc "
-            set -euo pipefail
+          echo "Adding URL to archive (tolerate non-zero exit)..."
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox add "${{ inputs.url }}" || true
 
-            echo 'Adding URL to ArchiveBox...'
-            archivebox add '${{ inputs.url }}' || true
+          MAX_ATTEMPTS=6
+          SLEEP_SECONDS=15
 
-            # Try several worker runs and poll for a non-empty index
-            MAX_ATTEMPTS=6
-            SLEEP_SECONDS=15
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "==== attempt $i: running worker (tolerate errors) ===="
+            # run the worker; do not fail the script if it returns non-zero
+            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox run || true
 
-            for i in \$(seq 1 \$MAX_ATTEMPTS); do
-              echo \"[attempt \$i] running worker...\"
-              # run the worker (may take time); tolerate errors so we can gather logs
-              archivebox run --max-workers=2 || true
+            echo "==== attempt $i: generating candidate index ===="
+            # generate candidate index on the host fs
+            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" || true
 
-              echo \"[attempt \$i] generating candidate index...\"
-              archivebox list --html --with-headers > /data/output_static/candidate_index.html || true
-              # if candidate_index.html exists and is non-empty, accept it
-              if [ -s /data/output_static/candidate_index.html ]; then
-                echo \"candidate_index.html non-empty; moving to index.html\"
-                mv /data/output_static/candidate_index.html /data/output_static/index.html
-                touch /data/output_static/.nojekyll || true
-                exit 0
-              fi
+            if [ -s "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" ]; then
+              echo "candidate_index.html non-empty; moving to index.html"
+              mv "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" "$GITHUB_WORKSPACE/archive/output_static/index.html"
+              touch "$GITHUB_WORKSPACE/archive/output_static/.nojekyll" || true
+              break
+            fi
 
-              echo \"candidate_index.html empty; sleeping \$SLEEP_SECONDS seconds before retry...\"
-              sleep \$SLEEP_SECONDS
-            done
+            echo "candidate_index.html empty; sleeping $SLEEP_SECONDS seconds before retry..."
+            sleep $SLEEP_SECONDS
+          done
 
-            # Final attempt to create index (even if empty) so we can see output
-            archivebox list --html --with-headers > /data/output_static/index.html || true
-            touch /data/output_static/.nojekyll || true
+          # final attempt to produce an index (may be empty) so we can capture diagnostics
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/index.html" || true
+          touch "$GITHUB_WORKSPACE/archive/output_static/.nojekyll" || true
 
-            # Gather diagnostics into the debug folder for inspection
-            echo \"Gathering diagnostics...\"
-            mkdir -p /data/output_static/debug
-            echo \"ls -la /data (top)\" > /data/output_static/debug/ls-data.txt
-            ls -la /data >> /data/output_static/debug/ls-data.txt 2>&1 || true
-            echo \"Listing snapshots (ls archive/)\" > /data/output_static/debug/ls-archive.txt
-            ls -la /data/archive 2>&1 | head -200 > /data/output_static/debug/ls-archive.txt || true
-            echo \"Tail errors.log (if present)\" > /data/output_static/debug/errors-log.txt
-            tail -n +1 /data/logs/errors.log 2>&1 | tail -n 500 >> /data/output_static/debug/errors-log.txt || true
-            echo \"Tail stdout.log (if present)\" > /data/output_static/debug/stdout-log.txt
-            tail -n +1 /data/stdout.log 2>&1 | tail -n 500 >> /data/output_static/debug/stdout-log.txt || true
-            echo \"ArchiveBox status:\" > /data/output_static/debug/status.txt
-            archivebox status >> /data/output_static/debug/status.txt 2>&1 || true
+          # diagnostics: collect filesystem info and logs so you can inspect why snapshots may not be present
+          echo "Collecting diagnostics into output_static/debug ..."
+          ls -la "$GITHUB_WORKSPACE/archive" > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-data.txt" || true
+          ls -la "$GITHUB_WORKSPACE/archive/archive" | head -200 > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-archive.txt" 2>/dev/null || true
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox status > "$GITHUB_WORKSPACE/archive/output_static/debug/status.txt" 2>&1 || true
+          # copy logs if present (safe no-fail)
+          if [ -f "$GITHUB_WORKSPACE/archive/logs/errors.log" ]; then
+            tail -n 500 "$GITHUB_WORKSPACE/archive/logs/errors.log" > "$GITHUB_WORKSPACE/archive/output_static/debug/errors-log.txt" || true
+          fi
+          if [ -f "$GITHUB_WORKSPACE/archive/stdout.log" ]; then
+            tail -n 500 "$GITHUB_WORKSPACE/archive/stdout.log" > "$GITHUB_WORKSPACE/archive/output_static/debug/stdout-log.txt" || true
+          fi
 
-            echo 'Finished attempts; index may be empty. Diagnostics written to /data/output_static/debug'
-          "
-
+          echo "Done. If index.html is empty, check the debug files in archive/output_static/debug."
+          
       - name: Mirror collection into output_static (runner-side) and clean runtime files
         run: |
           set -euo pipefail
