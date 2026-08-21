@@ -9,7 +9,7 @@ on:
         type: string
 
 permissions:
-  contents: write     # needed to push gh-pages branch
+  contents: write
   pages: write
   id-token: write
 
@@ -84,23 +84,26 @@ jobs:
                 --exclude=logs/** \
                 --exclude=lib \
                 --exclude=lib/** \
+                --exclude=machines \
+                --exclude=machines/** \
+                --exclude=binaries \
+                --exclude=binaries/** \
                 --exclude='**/*.lock' \
                 --exclude='**/*.pid' \
                 --exclude='archivebox.log' \
                 /data/ /data/output_static/
             else
-              # cp fallback with basic excludes
               for p in /data/*; do
                 [ "$p" = "/data/output_static" ] && continue
                 case "$(basename "$p")" in
-                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|archivebox.log) continue ;;
+                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|binaries|archivebox.log) continue ;;
                 esac
                 cp -a "$p" /data/output_static/ || true
               done
             fi
 
             # remove any leftover runtime files/directories that could break packaging
-            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib || true
+            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib /data/output_static/machines /data/output_static/binaries || true
             find /data/output_static -type f -name "*.sqlite3" -exec rm -f {} + || true
             find /data/output_static -type f -name "*.lock" -exec rm -f {} + || true
             find /data/output_static -type f -name "*.pid" -exec rm -f {} + || true
@@ -153,7 +156,7 @@ jobs:
           fi
 
           # final safeguard: remove any leftover runtime files before commit
-          rm -rf tmp logs lib || true
+          rm -rf tmp logs lib machines binaries || true
           find . -type f -name "*.sqlite3" -delete || true
           find . -type f -name "*.lock" -delete || true
           find . -type f -name "*.pid" -delete || true
