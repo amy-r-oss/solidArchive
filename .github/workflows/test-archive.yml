@@ -35,32 +35,31 @@ jobs:
 
       - name: Run ArchiveBox init
         run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            init --install
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox init --install
 
-      - name: Add URL and run worker with polling (generate index or diagnostics)
+      - name: Ensure output_static exists (host-side)
         run: |
-          set -euo pipefail
-
           mkdir -p "$GITHUB_WORKSPACE/archive/output_static"
           mkdir -p "$GITHUB_WORKSPACE/archive/output_static/debug"
 
-          echo "Adding URL to archive (tolerate non-zero exit)..."
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox add "${{ inputs.url }}" || true
+      - name: Add URL and run worker with polling (generate index or collect diagnostics)
+        run: |
+          set -euo pipefail
+
+          # Add URL (tolerate non-zero exit so we can collect diagnostics)
+          echo "Adding URL to ArchiveBox..."
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox add "${{ inputs.url }}" || true
 
           MAX_ATTEMPTS=6
           SLEEP_SECONDS=15
 
           for i in $(seq 1 $MAX_ATTEMPTS); do
             echo "==== attempt $i: running worker (tolerate errors) ===="
-            # run the worker; do not fail the script if it returns non-zero
-            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox run || true
+            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox run || true
 
             echo "==== attempt $i: generating candidate index ===="
-            # generate candidate index on the host fs
-            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" || true
+            # Generate candidate_index on the runner by redirecting container stdout
+            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" || true
 
             if [ -s "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" ]; then
               echo "candidate_index.html non-empty; moving to index.html"
@@ -73,25 +72,28 @@ jobs:
             sleep $SLEEP_SECONDS
           done
 
-          # final attempt to produce an index (may be empty) so we can capture diagnostics
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/index.html" || true
+          # Final attempt to produce an index (may be empty) so we can capture diagnostics
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/index.html" || true
           touch "$GITHUB_WORKSPACE/archive/output_static/.nojekyll" || true
 
-          # diagnostics: collect filesystem info and logs so you can inspect why snapshots may not be present
-          echo "Collecting diagnostics into output_static/debug ..."
-          ls -la "$GITHUB_WORKSPACE/archive" > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-data.txt" || true
-          ls -la "$GITHUB_WORKSPACE/archive/archive" | head -200 > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-archive.txt" 2>/dev/null || true
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox archivebox status > "$GITHUB_WORKSPACE/archive/output_static/debug/status.txt" 2>&1 || true
-          # copy logs if present (safe no-fail)
+          # Collect diagnostics (runner-side) so you can inspect what happened
+          echo "Collecting diagnostics ..."
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox status > "$GITHUB_WORKSPACE/archive/output_static/debug/status.txt" 2>&1 || true
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox list --json > "$GITHUB_WORKSPACE/archive/output_static/debug/list-json.txt" 2>&1 || true
+
+          # copy host-side logs if present
+          mkdir -p "$GITHUB_WORKSPACE/archive/output_static/debug"
           if [ -f "$GITHUB_WORKSPACE/archive/logs/errors.log" ]; then
             tail -n 500 "$GITHUB_WORKSPACE/archive/logs/errors.log" > "$GITHUB_WORKSPACE/archive/output_static/debug/errors-log.txt" || true
           fi
           if [ -f "$GITHUB_WORKSPACE/archive/stdout.log" ]; then
             tail -n 500 "$GITHUB_WORKSPACE/archive/stdout.log" > "$GITHUB_WORKSPACE/archive/output_static/debug/stdout-log.txt" || true
           fi
+          ls -la "$GITHUB_WORKSPACE/archive" > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-data.txt" || true
+          ls -la "$GITHUB_WORKSPACE/archive/archive" > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-archive.txt" 2>/dev/null || true
 
-          echo "Done. If index.html is empty, check the debug files in archive/output_static/debug."
-          
+          echo "Diagnostics collected to archive/output_static/debug"
+
       - name: Mirror collection into output_static (runner-side) and clean runtime files
         run: |
           set -euo pipefail
@@ -99,6 +101,7 @@ jobs:
           SRC="$GITHUB_WORKSPACE/archive/"
           DST="$GITHUB_WORKSPACE/archive/output_static/"
 
+          # Use runner-side rsync to copy files with reliable permissions handling.
           rsync -a --delete \
             --exclude='output_static' \
             --exclude='*.sqlite3' \
@@ -147,11 +150,11 @@ jobs:
             tail -n 200 "$GITHUB_WORKSPACE/archive/output_static/debug/errors-log.txt" || true
             echo "Tail debug/stdout-log.txt (if present):"
             tail -n 200 "$GITHUB_WORKSPACE/archive/output_static/debug/stdout-log.txt" || true
-            echo "If index is missing the worker didn't produce snapshots; check /archive/output_static/debug for details."
-            # upload the output_static dir as artifact for manual inspection by the repo owner
+            echo "If index is missing the worker didn't produce snapshots; check archive/output_static/debug for details."
             exit 2
           fi
           echo "Found index.html, proceeding."
+
       - name: Show exported files (sample)
         run: |
           echo "Exported static files (sample):"
