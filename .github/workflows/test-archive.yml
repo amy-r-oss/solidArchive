@@ -43,26 +43,59 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Export static HTML for GitHub Pages (ArchiveBox recommended method)
+      - name: Generate static site (detect export/static; fallback to list --html)
         run: |
-          docker run --rm \
-          --entrypoint archivebox \
-          my-archivebox \
-          --help
-          
-          docker run --rm \
-          my-archivebox \
-          --help
-        
-        # docker run --rm \
-        #   -v "$GITHUB_WORKSPACE/archive:/data" \
-        #   my-archivebox \
-        #   export --html --output /data/output_static
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc '
+            set -euo pipefail
+
+            mkdir -p /data/output_static
+
+            # Prefer new export CLI if present
+            if archivebox --help | grep -q "\bexport\b"; then
+              echo "Using archivebox export --html --output"
+              archivebox export --html --output /data/output_static
+              exit 0
+            fi
+
+            # Fall back to `static` if present
+            if archivebox --help | grep -q "\bstatic\b"; then
+              echo "Using archivebox static --output"
+              archivebox static --output /data/output_static
+              exit 0
+            fi
+
+            # Final fallback: generate a static index with list --html and mirror files
+            echo "Falling back to list --html method"
+            archivebox list --html --with-headers > /data/output_static/index.html
+
+            # Mirror collection files into output_static so links resolve
+            # Exclude the output dir itself and common large files/databases
+            if command -v rsync >/dev/null 2>&1; then
+              rsync -a --delete --exclude='output_static' --exclude='db.sqlite3' --exclude='index.html' --exclude='archivebox.log' /data/ /data/output_static/
+            else
+              # cp fallback
+              for p in /data/*; do
+                [ "$p" = "/data/output_static" ] && continue
+                case "$(basename "$p")" in
+                  db.sqlite3|index.html|archivebox.log) continue ;;
+                esac
+                cp -a "$p" /data/output_static/ || true
+              done
+            fi
+
+            if [ ! -f /data/output_static/index.html ]; then
+              echo "ERROR: index.html not generated"
+              exit 2
+            fi
+
+            echo "Static site assembled at /data/output_static"
+            du -sh /data/output_static || true
+          '
 
       - name: Show exported files
         run: |
           echo "Exported static files:"
-          find archive/output_static -maxdepth 4 -type f | sort || true
+          find archive/output_static -maxdepth 6 -type f | sort || true
 
       - name: Publish output_static to gh-pages branch
         env:
@@ -70,32 +103,29 @@ jobs:
         run: |
           set -e
 
-          # configure git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          # go to workspace root (actions/checkout checked out the repo)
           cd "$GITHUB_WORKSPACE"
 
-          # create a temporary directory and copy static files there
           TMPDIR="$(mktemp -d)"
           cp -R archive/output_static/* "$TMPDIR"/ || true
 
-          # switch to an orphan branch gh-pages and put the static files there
           git fetch origin
-          git checkout --orphan gh-pages || git checkout gh-pages || true
-          # remove all files from the index (safe even if branch didn't exist)
-          git rm -rf . || true
+          if git show-ref --quiet refs/heads/gh-pages; then
+            git checkout gh-pages
+            git rm -rf . || true
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . || true
+          fi
 
-          # copy files from tmpdir into repo root
           cp -R "$TMPDIR"/* .
 
-          # ensure an index.html exists (ArchiveBox produces one)
           if [ ! -f index.html ]; then
             echo "Warning: no index.html found in exported static site"
           fi
 
-          # commit and force-push gh-pages
           git add -A
           git commit -m "Publish ArchiveBox export to gh-pages [skip ci]" || true
           git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
