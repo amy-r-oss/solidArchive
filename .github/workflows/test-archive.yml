@@ -43,7 +43,7 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Generate static site (detect export/static; fallback to list --html)
+      - name: Generate static site (detect export/static; fallback to list --html) and clean runtime files
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc '
             set -euo pipefail
@@ -70,20 +70,40 @@ jobs:
             echo "Falling back to list --html method"
             archivebox list --html --with-headers > /data/output_static/index.html
 
-            # Mirror collection files into output_static so links resolve
-            # Exclude the output dir itself and common large files/databases
+            # Mirror collection files into output_static so links resolve.
+            # Exclude known runtime or large paths that must not be published.
             if command -v rsync >/dev/null 2>&1; then
-              rsync -a --delete --exclude=output_static --exclude=db.sqlite3 --exclude=index.html --exclude=archivebox.log /data/ /data/output_static/
+              rsync -a --delete \
+                --exclude=output_static \
+                --exclude=db.sqlite3 \
+                --exclude=index.sqlite3 \
+                --exclude='*.sqlite3' \
+                --exclude=tmp \
+                --exclude=tmp/** \
+                --exclude=logs \
+                --exclude=logs/** \
+                --exclude=lib \
+                --exclude=lib/** \
+                --exclude='**/*.lock' \
+                --exclude='**/*.pid' \
+                --exclude='archivebox.log' \
+                /data/ /data/output_static/
             else
-              # cp fallback
+              # cp fallback with basic excludes
               for p in /data/*; do
                 [ "$p" = "/data/output_static" ] && continue
                 case "$(basename "$p")" in
-                  db.sqlite3|index.html|archivebox.log) continue ;;
+                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|archivebox.log) continue ;;
                 esac
                 cp -a "$p" /data/output_static/ || true
               done
             fi
+
+            # remove any leftover runtime files/directories that could break packaging
+            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib || true
+            find /data/output_static -type f -name "*.sqlite3" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.lock" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.pid" -exec rm -f {} + || true
 
             # disable Jekyll processing on GitHub Pages
             touch /data/output_static/.nojekyll
@@ -93,11 +113,11 @@ jobs:
               exit 2
             fi
 
-            echo "Static site assembled at /data/output_static"
+            echo "Static site assembled and cleaned at /data/output_static"
             du -sh /data/output_static || true
           '
 
-      - name: Show exported files
+      - name: Show exported files (sample)
         run: |
           echo "Exported static files (sample):"
           find archive/output_static -maxdepth 6 -type f | sort | head -200 || true
@@ -131,6 +151,12 @@ jobs:
           if [ ! -f .nojekyll ]; then
             touch .nojekyll
           fi
+
+          # final safeguard: remove any leftover runtime files before commit
+          rm -rf tmp logs lib || true
+          find . -type f -name "*.sqlite3" -delete || true
+          find . -type f -name "*.lock" -delete || true
+          find . -type f -name "*.pid" -delete || true
 
           if [ ! -f index.html ]; then
             echo "Warning: no index.html found in exported static site"
