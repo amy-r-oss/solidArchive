@@ -54,7 +54,6 @@ jobs:
             if archivebox --help | grep -q "\bexport\b"; then
               echo "Using archivebox export --html --output"
               archivebox export --html --output /data/output_static
-              # ensure .nojekyll so GitHub Pages doesn't run Jekyll
               touch /data/output_static/.nojekyll
               exit 0
             fi
@@ -71,10 +70,12 @@ jobs:
             echo "Falling back to list --html method"
             archivebox list --html --with-headers > /data/output_static/index.html
 
-            # mirror collection files into output_static so links resolve
+            # Mirror collection files into output_static so links resolve
+            # Exclude the output dir itself and common large files/databases
             if command -v rsync >/dev/null 2>&1; then
-              rsync -a --delete --exclude='output_static' --exclude='db.sqlite3' --exclude='index.html' --exclude='archivebox.log' /data/ /data/output_static/
+              rsync -a --delete --exclude=output_static --exclude=db.sqlite3 --exclude=index.html --exclude=archivebox.log /data/ /data/output_static/
             else
+              # cp fallback
               for p in /data/*; do
                 [ "$p" = "/data/output_static" ] && continue
                 case "$(basename "$p")" in
