@@ -93,14 +93,21 @@ jobs:
                 --exclude=ArchiveBox.conf \
                 --exclude=stdout.log \
                 --exclude='*.log' \
-                --exclude='*.pid' \
                 --exclude='*.lock' \
+                --exclude='*.pid' \
+                --exclude='**/ublock' \
+                --exclude='**/ublock/**' \
+                --exclude='**/responses' \
+                --exclude='**/responses/**' \
+                --exclude='**/*.sh' \
+                --exclude='**/*.exe' \
+                --exclude='**/*.bin' \
                 /data/ /data/output_static/
             else
               for p in /data/*; do
                 [ "$p" = "/data/output_static" ] && continue
                 case "$(basename "$p")" in
-                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|sonic|binaries|ArchiveBox.conf|stdout.log|*.log) continue ;;
+                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|sonic|binaries|ArchiveBox.conf|stdout.log|*.log|*.lock|*.pid) continue ;;
                 esac
                 cp -a "$p" /data/output_static/ || true
               done
@@ -113,6 +120,11 @@ jobs:
             find /data/output_static -type f -name "*.lock" -exec rm -f {} + || true
             find /data/output_static -type f -name "*.pid" -exec rm -f {} + || true
             rm -f /data/output_static/ArchiveBox.conf /data/output_static/stdout.log || true
+            # remove ublock/responses artifacts if any slipped through
+            rm -rf /data/output_static/**/ublock /data/output_static/**/responses || true
+            find /data/output_static -type f -name "*.sh" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.exe" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.bin" -exec rm -f {} + || true
 
             # disable Jekyll processing on GitHub Pages
             touch /data/output_static/.nojekyll
@@ -162,12 +174,17 @@ jobs:
           fi
 
           # final safeguard: remove any leftover runtime files before commit
-          rm -rf tmp logs lib machines binaries sonic sonic* || true
+          rm -rf tmp logs lib machines binaries sonic || true
           rm -f ArchiveBox.conf stdout.log || true
           find . -type f -name "*.sqlite3" -delete || true
           find . -type f -name "*.log" -delete || true
           find . -type f -name "*.lock" -delete || true
           find . -type f -name "*.pid" -delete || true
+          find . -type f -name "*.sh" -delete || true
+          find . -type f -name "*.exe" -delete || true
+          find . -type f -name "*.bin" -delete || true
+          find . -path "./**/ublock/*" -prune -exec rm -rf {} + || true
+          find . -path "./**/responses/*" -prune -exec rm -rf {} + || true
 
           if [ ! -f index.html ]; then
             echo "Warning: no index.html found in exported static site"
