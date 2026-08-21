@@ -46,9 +46,18 @@ jobs:
       - name: Export static HTML for GitHub Pages (ArchiveBox recommended method)
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            export --html --output /data/output_static
+          --entrypoint archivebox \
+          my-archivebox \
+          --help
+          
+          docker run --rm \
+          my-archivebox \
+          --help
+        
+        # docker run --rm \
+        #   -v "$GITHUB_WORKSPACE/archive:/data" \
+        #   my-archivebox \
+        #   export --html --output /data/output_static
 
       - name: Show exported files
         run: |
