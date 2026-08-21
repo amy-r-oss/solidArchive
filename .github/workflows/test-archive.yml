@@ -71,47 +71,38 @@ jobs:
             archivebox list --html --with-headers > /data/output_static/index.html
 
             # Mirror collection files into output_static so links resolve.
-            # Exclude known runtime or large paths that must not be published.
+            # Keep excludes simple here; we'll run aggressive cleanup after copy.
             if command -v rsync >/dev/null 2>&1; then
               rsync -a --delete \
                 --exclude=output_static \
-                --exclude=db.sqlite3 \
-                --exclude=index.sqlite3 \
                 --exclude='*.sqlite3' \
                 --exclude=tmp \
-                --exclude=tmp/** \
                 --exclude=logs \
-                --exclude=logs/** \
-                --exclude=lib \
-                --exclude=lib/** \
-                --exclude=machines \
-                --exclude=machines/** \
-                --exclude=sonic \
-                --exclude=sonic/** \
-                --exclude=binaries \
-                --exclude=binaries/** \
-                --exclude=ArchiveBox.conf \
-                --exclude=stdout.log \
-                --exclude='*.log' \
-                --exclude='*.pid' \
-                --exclude='*.lock' \
+                --exclude=archivebox.log \
                 /data/ /data/output_static/
             else
               for p in /data/*; do
                 [ "$p" = "/data/output_static" ] && continue
                 case "$(basename "$p")" in
-                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|sonic|binaries|ArchiveBox.conf|stdout.log|*.log) continue ;;
+                  *.sqlite3|tmp|logs|archivebox.log) continue ;;
                 esac
                 cp -a "$p" /data/output_static/ || true
               done
             fi
 
-            # remove any leftover runtime files/directories that could break packaging
-            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib /data/output_static/machines /data/output_static/binaries /data/output_static/sonic || true
-            find /data/output_static -type f -name "*.sqlite3" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.log" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.lock" -exec rm -f {} + || true
-            find /data/output_static -type f -name "*.pid" -exec rm -f {} + || true
+            # Aggressive cleanup: remove any runtime/install files that break Pages packaging
+            find /data/output_static -type d -name lib -prune -exec rm -rf {} + || true
+            find /data/output_static -type d -name machines -prune -exec rm -rf {} + || true
+            find /data/output_static -type d -name sonic -prune -exec rm -rf {} + || true
+            find /data/output_static -type d -name binaries -prune -exec rm -rf {} + || true
+            find /data/output_static -type d -name tmp -prune -exec rm -rf {} + || true
+            find /data/output_static -type d -name logs -prune -exec rm -rf {} + || true
+
+            # remove common problematic files
+            find /data/output_static -type f -name "*.sqlite3" -delete || true
+            find /data/output_static -type f -name "*.log" -delete || true
+            find /data/output_static -type f -name "*.lock" -delete || true
+            find /data/output_static -type f -name "*.pid" -delete || true
             rm -f /data/output_static/ArchiveBox.conf /data/output_static/stdout.log || true
 
             # disable Jekyll processing on GitHub Pages
@@ -162,7 +153,11 @@ jobs:
           fi
 
           # final safeguard: remove any leftover runtime files before commit
-          rm -rf tmp logs lib machines binaries sonic sonic* || true
+          find . -type d -name lib -prune -exec rm -rf {} + || true
+          find . -type d -name machines -prune -exec rm -rf {} + || true
+          find . -type d -name sonic -prune -exec rm -rf {} + || true
+          find . -type d -name binaries -prune -exec rm -rf {} + || true
+          rm -rf tmp logs || true
           rm -f ArchiveBox.conf stdout.log || true
           find . -type f -name "*.sqlite3" -delete || true
           find . -type f -name "*.log" -delete || true
