@@ -1,83 +1,58 @@
-name: Test Archive
-
-on:
-  workflow_dispatch:
-    inputs:
-      url:
-        description: "URL to archive"
-        required: true
-        type: string
-
-permissions:
-  contents: write
-  pages: write
-  id-token: write
-
-jobs:
-  archive:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout this exact fork/commit
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-
-      - name: Prepare empty archive directory
+      - name: Add URL and run worker with polling (generate index or diagnostics)
         run: |
-          # Ensure a clean data directory so `archivebox init` won't fail
-          rm -rf "$GITHUB_WORKSPACE/archive"
-          mkdir -p "$GITHUB_WORKSPACE/archive"
-
-      - name: Build ArchiveBox from this source
-        run: |
-          docker build -t my-archivebox .
-
-      - name: Run ArchiveBox init
-        run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            init --install
-
-      - name: Add URL and run worker to create snapshots
-        run: |
-          # Add the URL and run the worker to produce snapshots (process queue).
-          # We run both inside the container; run may take some time depending on the target.
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc "
-            set -euo pipefail
-            echo 'Adding URL to archive...'
-            archivebox add '${{ inputs.url }}'
-            echo 'Running archivebox worker to process queue (this may take a while)...'
-            # 'run' will process queued work. Use a short / reasonable timeout if desired.
-            archivebox run --max-workers=2 || true
-            echo 'Worker finished (or timed out).'
-          "
-
-      - name: Create output_static directory (host-side)
-        run: |
+          set -euo pipefail
+          # ensure output dir exists on host
           mkdir -p "$GITHUB_WORKSPACE/archive/output_static"
+          mkdir -p "$GITHUB_WORKSPACE/archive/output_static/debug"
 
-      - name: Generate static site inside container (export/static/list --html fallback)
-        run: |
-          # Run inside the container to produce static files at /data/output_static
           docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc "
             set -euo pipefail
-            mkdir -p /data/output_static
 
-            if archivebox --help | grep -q export; then
-              echo 'Using archivebox export --html --output'
-              archivebox export --html --output /data/output_static || true
-            elif archivebox --help | grep -q static; then
-              echo 'Using archivebox static --output'
-              archivebox static --output /data/output_static || true
-            else
-              echo 'Falling back to list --html method'
-              archivebox list --html --with-headers > /data/output_static/index.html || true
-            fi
+            echo 'Adding URL to ArchiveBox...'
+            archivebox add '${{ inputs.url }}' || true
 
-            # ensure .nojekyll so GitHub Pages won't run Jekyll
+            # Try several worker runs and poll for a non-empty index
+            MAX_ATTEMPTS=6
+            SLEEP_SECONDS=15
+
+            for i in \$(seq 1 \$MAX_ATTEMPTS); do
+              echo \"[attempt \$i] running worker...\"
+              # run the worker (may take time); tolerate errors so we can gather logs
+              archivebox run --max-workers=2 || true
+
+              echo \"[attempt \$i] generating candidate index...\"
+              archivebox list --html --with-headers > /data/output_static/candidate_index.html || true
+              # if candidate_index.html exists and is non-empty, accept it
+              if [ -s /data/output_static/candidate_index.html ]; then
+                echo \"candidate_index.html non-empty; moving to index.html\"
+                mv /data/output_static/candidate_index.html /data/output_static/index.html
+                touch /data/output_static/.nojekyll || true
+                exit 0
+              fi
+
+              echo \"candidate_index.html empty; sleeping \$SLEEP_SECONDS seconds before retry...\"
+              sleep \$SLEEP_SECONDS
+            done
+
+            # Final attempt to create index (even if empty) so we can see output
+            archivebox list --html --with-headers > /data/output_static/index.html || true
             touch /data/output_static/.nojekyll || true
+
+            # Gather diagnostics into the debug folder for inspection
+            echo \"Gathering diagnostics...\"
+            mkdir -p /data/output_static/debug
+            echo \"ls -la /data (top)\" > /data/output_static/debug/ls-data.txt
+            ls -la /data >> /data/output_static/debug/ls-data.txt 2>&1 || true
+            echo \"Listing snapshots (ls archive/)\" > /data/output_static/debug/ls-archive.txt
+            ls -la /data/archive 2>&1 | head -200 > /data/output_static/debug/ls-archive.txt || true
+            echo \"Tail errors.log (if present)\" > /data/output_static/debug/errors-log.txt
+            tail -n +1 /data/logs/errors.log 2>&1 | tail -n 500 >> /data/output_static/debug/errors-log.txt || true
+            echo \"Tail stdout.log (if present)\" > /data/output_static/debug/stdout-log.txt
+            tail -n +1 /data/stdout.log 2>&1 | tail -n 500 >> /data/output_static/debug/stdout-log.txt || true
+            echo \"ArchiveBox status:\" > /data/output_static/debug/status.txt
+            archivebox status >> /data/output_static/debug/status.txt 2>&1 || true
+
+            echo 'Finished attempts; index may be empty. Diagnostics written to /data/output_static/debug'
           "
 
       - name: Mirror collection into output_static (runner-side) and clean runtime files
@@ -87,7 +62,6 @@ jobs:
           SRC="$GITHUB_WORKSPACE/archive/"
           DST="$GITHUB_WORKSPACE/archive/output_static/"
 
-          # Use runner-side rsync to copy files with reliable permissions handling.
           rsync -a --delete \
             --exclude='output_static' \
             --exclude='*.sqlite3' \
@@ -125,72 +99,19 @@ jobs:
           find "$DST" -maxdepth 3 -type f | head -200 || true
           du -sh "$DST" || true
 
-      - name: Verify static index exists
+      - name: Verify static index exists (or fail with diagnostics)
         run: |
-          if [ ! -f "$GITHUB_WORKSPACE/archive/output_static/index.html" ]; then
-            echo "ERROR: output_static/index.html not found. Listing output_static:"
+          if [ ! -f "$GITHUB_WORKSPACE/archive/output_static/index.html" ] || [ ! -s "$GITHUB_WORKSPACE/archive/output_static/index.html" ]; then
+            echo "ERROR: output_static/index.html not found or empty. Listing output_static:"
             ls -la "$GITHUB_WORKSPACE/archive/output_static" || true
+            echo "Showing debug files (if any):"
+            ls -la "$GITHUB_WORKSPACE/archive/output_static/debug" || true
+            echo "Tail debug/errors-log.txt (if present):"
+            tail -n 200 "$GITHUB_WORKSPACE/archive/output_static/debug/errors-log.txt" || true
+            echo "Tail debug/stdout-log.txt (if present):"
+            tail -n 200 "$GITHUB_WORKSPACE/archive/output_static/debug/stdout-log.txt" || true
+            echo "If index is missing the worker didn't produce snapshots; check /archive/output_static/debug for details."
+            # upload the output_static dir as artifact for manual inspection by the repo owner
             exit 2
           fi
           echo "Found index.html, proceeding."
-
-      - name: Show exported files (sample)
-        run: |
-          echo "Exported static files (sample):"
-          find archive/output_static -maxdepth 6 -type f | sort | head -200 || true
-
-      - name: Publish output_static to gh-pages branch
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          cd "$GITHUB_WORKSPACE"
-
-          TMPDIR="$(mktemp -d)"
-          cp -R archive/output_static/* "$TMPDIR"/ || true
-
-          git fetch origin
-          if git show-ref --quiet refs/heads/gh-pages; then
-            git checkout gh-pages
-            git rm -rf . || true
-          else
-            git checkout --orphan gh-pages
-            git rm -rf . || true
-          fi
-
-          cp -R "$TMPDIR"/* .
-
-          # ensure .nojekyll exists to prevent Jekyll processing
-          if [ ! -f .nojekyll ]; then
-            touch .nojekyll
-          fi
-
-          # final safeguard: remove any leftover runtime files before commit
-          find . -type d -name lib -prune -exec rm -rf {} + || true
-          find . -type d -name machines -prune -exec rm -rf {} + || true
-          find . -type d -name sonic -prune -exec rm -rf {} + || true
-          find . -type d -name binaries -prune -exec rm -rf {} + || true
-          rm -rf tmp logs || true
-          rm -f ArchiveBox.conf stdout.log || true
-          find . -type f -name "*.sqlite3" -delete || true
-          find . -type f -name "*.log" -delete || true
-          find . -type f -name "*.lock" -delete || true
-          find . -type f -name "*.pid" -delete || true
-
-          if [ ! -f index.html ]; then
-            echo "Warning: no index.html found in exported static site"
-          fi
-
-          git add -A
-          git commit -m "Publish ArchiveBox export to gh-pages [skip ci]" || true
-          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" gh-pages
-
-      - name: Upload test output (full archive) for debugging
-        uses: actions/upload-artifact@v4
-        with:
-          name: archive-test-output
-          path: archive/
