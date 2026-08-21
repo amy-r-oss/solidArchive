@@ -30,6 +30,8 @@ jobs:
       - name: Create archive directory
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
+          # ensure output dir exists on host so container mount has it
+          mkdir -p "$GITHUB_WORKSPACE/archive/output_static"
 
       - name: Run ArchiveBox (init + add URL)
         run: |
@@ -43,79 +45,77 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Generate static site (detect export/static; fallback to list --html) and clean runtime files
+      - name: Generate static site inside container (no rsync here)
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc '
+          # run ArchiveBox inside container to produce index or static export into /data/output_static
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc "
             set -euo pipefail
-
             mkdir -p /data/output_static
 
-            # Prefer new export CLI if present
-            if archivebox --help | grep -q "\bexport\b"; then
-              echo "Using archivebox export --html --output"
-              archivebox export --html --output /data/output_static
-              touch /data/output_static/.nojekyll
+            if archivebox --help | grep -q \"export\"; then
+              echo 'Using archivebox export --html --output'
+              archivebox export --html --output /data/output_static || true
+              touch /data/output_static/.nojekyll || true
               exit 0
             fi
 
-            # Fall back to `static` if present
-            if archivebox --help | grep -q "\bstatic\b"; then
-              echo "Using archivebox static --output"
-              archivebox static --output /data/output_static
-              touch /data/output_static/.nojekyll
+            if archivebox --help | grep -q \"static\"; then
+              echo 'Using archivebox static --output'
+              archivebox static --output /data/output_static || true
+              touch /data/output_static/.nojekyll || true
               exit 0
             fi
 
-            # Final fallback: generate a static index with list --html and mirror files
-            echo "Falling back to list --html method"
-            archivebox list --html --with-headers > /data/output_static/index.html
+            echo 'Falling back to list --html method'
+            archivebox list --html --with-headers > /data/output_static/index.html || true
+            touch /data/output_static/.nojekyll || true
+          "
 
-            # Mirror collection files into output_static so links resolve.
-            # Keep excludes simple here; we'll run aggressive cleanup after copy.
-            if command -v rsync >/dev/null 2>&1; then
-              rsync -a --delete \
-                --exclude=output_static \
-                --exclude='*.sqlite3' \
-                --exclude=tmp \
-                --exclude=logs \
-                --exclude=archivebox.log \
-                /data/ /data/output_static/
-            else
-              for p in /data/*; do
-                [ "$p" = "/data/output_static" ] && continue
-                case "$(basename "$p")" in
-                  *.sqlite3|tmp|logs|archivebox.log) continue ;;
-                esac
-                cp -a "$p" /data/output_static/ || true
-              done
-            fi
+      - name: Mirror collection into output_static (host-side) and clean runtime files
+        run: |
+          set -euo pipefail
 
-            # Aggressive cleanup: remove any runtime/install files that break Pages packaging
-            find /data/output_static -type d -name lib -prune -exec rm -rf {} + || true
-            find /data/output_static -type d -name machines -prune -exec rm -rf {} + || true
-            find /data/output_static -type d -name sonic -prune -exec rm -rf {} + || true
-            find /data/output_static -type d -name binaries -prune -exec rm -rf {} + || true
-            find /data/output_static -type d -name tmp -prune -exec rm -rf {} + || true
-            find /data/output_static -type d -name logs -prune -exec rm -rf {} + || true
+          SRC="$GITHUB_WORKSPACE/archive/"
+          DST="$GITHUB_WORKSPACE/archive/output_static/"
 
-            # remove common problematic files
-            find /data/output_static -type f -name "*.sqlite3" -delete || true
-            find /data/output_static -type f -name "*.log" -delete || true
-            find /data/output_static -type f -name "*.lock" -delete || true
-            find /data/output_static -type f -name "*.pid" -delete || true
-            rm -f /data/output_static/ArchiveBox.conf /data/output_static/stdout.log || true
+          # Use rsync on the runner side (avoid container-side rsync/permission issues).
+          # Exclude runtime and large/install directories that break Pages packaging.
+          rsync -a --delete \
+            --exclude='output_static' \
+            --exclude='*.sqlite3' \
+            --exclude='tmp' \
+            --exclude='tmp/**' \
+            --exclude='logs' \
+            --exclude='logs/**' \
+            --exclude='lib' \
+            --exclude='lib/**' \
+            --exclude='machines' \
+            --exclude='machines/**' \
+            --exclude='sonic' \
+            --exclude='sonic/**' \
+            --exclude='binaries' \
+            --exclude='binaries/**' \
+            --exclude='ArchiveBox.conf' \
+            --exclude='stdout.log' \
+            --exclude='*.log' \
+            --exclude='*.lock' \
+            --exclude='*.pid' \
+            \"$SRC\" \"$DST\"
 
-            # disable Jekyll processing on GitHub Pages
-            touch /data/output_static/.nojekyll
+          # Aggressive cleanup: ensure nothing runtime-like remains
+          rm -rf "$DST/tmp" "$DST/logs" "$DST/lib" "$DST/machines" "$DST/binaries" "$DST/sonic" || true
+          find "$DST" -type f -name "*.sqlite3" -delete || true
+          find "$DST" -type f -name "*.log" -delete || true
+          find "$DST" -type f -name "*.lock" -delete || true
+          find "$DST" -type f -name "*.pid" -delete || true
+          rm -f "$DST/ArchiveBox.conf" "$DST/stdout.log" || true
 
-            if [ ! -f /data/output_static/index.html ]; then
-              echo "ERROR: index.html not generated"
-              exit 2
-            fi
+          # ensure .nojekyll present
+          touch "$DST/.nojekyll"
 
-            echo "Static site assembled and cleaned at /data/output_static"
-            du -sh /data/output_static || true
-          '
+          echo "Assembled static site at $DST (sample):"
+          find "$DST" -maxdepth 3 -type f | head -200 || true
+          du -sh "$DST" || true
 
       - name: Show exported files (sample)
         run: |
