@@ -23,137 +23,108 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: Prepare empty archive directory
-        run: |
-          # Ensure a clean data directory so `archivebox init` won't fail
-          rm -rf "$GITHUB_WORKSPACE/archive"
-          mkdir -p "$GITHUB_WORKSPACE/archive"
-
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
 
-      - name: Run ArchiveBox init
+      - name: Create archive directory
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox init --install
+          mkdir -p "$GITHUB_WORKSPACE/archive"
 
-      - name: Ensure output_static exists (host-side)
+      - name: Run ArchiveBox (init + add URL)
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/archive/output_static"
-          mkdir -p "$GITHUB_WORKSPACE/archive/output_static/debug"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            init --install
 
-      - name: Add URL and run worker with polling (generate index or collect diagnostics)
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            add "${{ inputs.url }}"
+
+      - name: Generate static site (detect export/static; fallback to list --html) and clean runtime files
         run: |
-          set -euo pipefail
+          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc '
+            set -euo pipefail
 
-          # Add URL (tolerate non-zero exit so we can collect diagnostics)
-          echo "Adding URL to ArchiveBox..."
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox add "${{ inputs.url }}" || true
+            mkdir -p /data/output_static
 
-          MAX_ATTEMPTS=6
-          SLEEP_SECONDS=15
-
-          for i in $(seq 1 $MAX_ATTEMPTS); do
-            echo "==== attempt $i: running worker (tolerate errors) ===="
-            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox run || true
-
-            echo "==== attempt $i: generating candidate index ===="
-            # Generate candidate_index on the runner by redirecting container stdout
-            docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" || true
-
-            if [ -s "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" ]; then
-              echo "candidate_index.html non-empty; moving to index.html"
-              mv "$GITHUB_WORKSPACE/archive/output_static/candidate_index.html" "$GITHUB_WORKSPACE/archive/output_static/index.html"
-              touch "$GITHUB_WORKSPACE/archive/output_static/.nojekyll" || true
-              break
+            # Prefer new export CLI if present
+            if archivebox --help | grep -q "\bexport\b"; then
+              echo "Using archivebox export --html --output"
+              archivebox export --html --output /data/output_static
+              touch /data/output_static/.nojekyll
+              exit 0
             fi
 
-            echo "candidate_index.html empty; sleeping $SLEEP_SECONDS seconds before retry..."
-            sleep $SLEEP_SECONDS
-          done
+            # Fall back to `static` if present
+            if archivebox --help | grep -q "\bstatic\b"; then
+              echo "Using archivebox static --output"
+              archivebox static --output /data/output_static
+              touch /data/output_static/.nojekyll
+              exit 0
+            fi
 
-          # Final attempt to produce an index (may be empty) so we can capture diagnostics
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox list --html --with-headers > "$GITHUB_WORKSPACE/archive/output_static/index.html" || true
-          touch "$GITHUB_WORKSPACE/archive/output_static/.nojekyll" || true
+            # Final fallback: generate a static index with list --html and mirror files
+            echo "Falling back to list --html method"
+            archivebox list --html --with-headers > /data/output_static/index.html
 
-          # Collect diagnostics (runner-side) so you can inspect what happened
-          echo "Collecting diagnostics ..."
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox status > "$GITHUB_WORKSPACE/archive/output_static/debug/status.txt" 2>&1 || true
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox list --json > "$GITHUB_WORKSPACE/archive/output_static/debug/list-json.txt" 2>&1 || true
+            # Mirror collection files into output_static so links resolve.
+            # Exclude known runtime or large paths that must not be published.
+            if command -v rsync >/dev/null 2>&1; then
+              rsync -a --delete \
+                --exclude=output_static \
+                --exclude=db.sqlite3 \
+                --exclude=index.sqlite3 \
+                --exclude='*.sqlite3' \
+                --exclude=tmp \
+                --exclude=tmp/** \
+                --exclude=logs \
+                --exclude=logs/** \
+                --exclude=lib \
+                --exclude=lib/** \
+                --exclude=machines \
+                --exclude=machines/** \
+                --exclude=sonic \
+                --exclude=sonic/** \
+                --exclude=binaries \
+                --exclude=binaries/** \
+                --exclude=ArchiveBox.conf \
+                --exclude=stdout.log \
+                --exclude='*.log' \
+                --exclude='*.pid' \
+                --exclude='*.lock' \
+                /data/ /data/output_static/
+            else
+              for p in /data/*; do
+                [ "$p" = "/data/output_static" ] && continue
+                case "$(basename "$p")" in
+                  db.sqlite3|index.sqlite3|*.sqlite3|tmp|logs|lib|machines|sonic|binaries|ArchiveBox.conf|stdout.log|*.log) continue ;;
+                esac
+                cp -a "$p" /data/output_static/ || true
+              done
+            fi
 
-          # copy host-side logs if present
-          mkdir -p "$GITHUB_WORKSPACE/archive/output_static/debug"
-          if [ -f "$GITHUB_WORKSPACE/archive/logs/errors.log" ]; then
-            tail -n 500 "$GITHUB_WORKSPACE/archive/logs/errors.log" > "$GITHUB_WORKSPACE/archive/output_static/debug/errors-log.txt" || true
-          fi
-          if [ -f "$GITHUB_WORKSPACE/archive/stdout.log" ]; then
-            tail -n 500 "$GITHUB_WORKSPACE/archive/stdout.log" > "$GITHUB_WORKSPACE/archive/output_static/debug/stdout-log.txt" || true
-          fi
-          ls -la "$GITHUB_WORKSPACE/archive" > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-data.txt" || true
-          ls -la "$GITHUB_WORKSPACE/archive/archive" > "$GITHUB_WORKSPACE/archive/output_static/debug/ls-archive.txt" 2>/dev/null || true
+            # remove any leftover runtime files/directories that could break packaging
+            rm -rf /data/output_static/tmp /data/output_static/logs /data/output_static/lib /data/output_static/machines /data/output_static/binaries /data/output_static/sonic || true
+            find /data/output_static -type f -name "*.sqlite3" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.log" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.lock" -exec rm -f {} + || true
+            find /data/output_static -type f -name "*.pid" -exec rm -f {} + || true
+            rm -f /data/output_static/ArchiveBox.conf /data/output_static/stdout.log || true
 
-          echo "Diagnostics collected to archive/output_static/debug"
+            # disable Jekyll processing on GitHub Pages
+            touch /data/output_static/.nojekyll
 
-      - name: Mirror collection into output_static (runner-side) and clean runtime files
-        run: |
-          set -euo pipefail
+            if [ ! -f /data/output_static/index.html ]; then
+              echo "ERROR: index.html not generated"
+              exit 2
+            fi
 
-          SRC="$GITHUB_WORKSPACE/archive/"
-          DST="$GITHUB_WORKSPACE/archive/output_static/"
-
-          # Use runner-side rsync to copy files with reliable permissions handling.
-          rsync -a --delete \
-            --exclude='output_static' \
-            --exclude='*.sqlite3' \
-            --exclude='tmp' \
-            --exclude='tmp/**' \
-            --exclude='logs' \
-            --exclude='logs/**' \
-            --exclude='lib' \
-            --exclude='lib/**' \
-            --exclude='machines' \
-            --exclude='machines/**' \
-            --exclude='sonic' \
-            --exclude='sonic/**' \
-            --exclude='binaries' \
-            --exclude='binaries/**' \
-            --exclude='ArchiveBox.conf' \
-            --exclude='stdout.log' \
-            --exclude='*.log' \
-            --exclude='*.lock' \
-            --exclude='*.pid' \
-            "$SRC" "$DST"
-
-          # Aggressive cleanup: ensure no runtime/install artifacts remain
-          rm -rf "$DST/tmp" "$DST/logs" "$DST/lib" "$DST/machines" "$DST/binaries" "$DST/sonic" || true
-          find "$DST" -type f -name "*.sqlite3" -delete || true
-          find "$DST" -type f -name "*.log" -delete || true
-          find "$DST" -type f -name "*.lock" -delete || true
-          find "$DST" -type f -name "*.pid" -delete || true
-          rm -f "$DST/ArchiveBox.conf" "$DST/stdout.log" || true
-
-          # ensure .nojekyll present
-          touch "$DST/.nojekyll"
-
-          echo "Assembled static site at $DST (sample):"
-          find "$DST" -maxdepth 3 -type f | head -200 || true
-          du -sh "$DST" || true
-
-      - name: Verify static index exists (or fail with diagnostics)
-        run: |
-          if [ ! -f "$GITHUB_WORKSPACE/archive/output_static/index.html" ] || [ ! -s "$GITHUB_WORKSPACE/archive/output_static/index.html" ]; then
-            echo "ERROR: output_static/index.html not found or empty. Listing output_static:"
-            ls -la "$GITHUB_WORKSPACE/archive/output_static" || true
-            echo "Showing debug files (if any):"
-            ls -la "$GITHUB_WORKSPACE/archive/output_static/debug" || true
-            echo "Tail debug/errors-log.txt (if present):"
-            tail -n 200 "$GITHUB_WORKSPACE/archive/output_static/debug/errors-log.txt" || true
-            echo "Tail debug/stdout-log.txt (if present):"
-            tail -n 200 "$GITHUB_WORKSPACE/archive/output_static/debug/stdout-log.txt" || true
-            echo "If index is missing the worker didn't produce snapshots; check archive/output_static/debug for details."
-            exit 2
-          fi
-          echo "Found index.html, proceeding."
+            echo "Static site assembled and cleaned at /data/output_static"
+            du -sh /data/output_static || true
+          '
 
       - name: Show exported files (sample)
         run: |
@@ -191,11 +162,7 @@ jobs:
           fi
 
           # final safeguard: remove any leftover runtime files before commit
-          find . -type d -name lib -prune -exec rm -rf {} + || true
-          find . -type d -name machines -prune -exec rm -rf {} + || true
-          find . -type d -name sonic -prune -exec rm -rf {} + || true
-          find . -type d -name binaries -prune -exec rm -rf {} + || true
-          rm -rf tmp logs || true
+          rm -rf tmp logs lib machines binaries sonic sonic* || true
           rm -f ArchiveBox.conf stdout.log || true
           find . -type f -name "*.sqlite3" -delete || true
           find . -type f -name "*.log" -delete || true
