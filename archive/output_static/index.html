@@ -1,0 +1,303 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <title>Archived Sites</title>
+        <meta charset="utf-8" name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            :root {
+                --bg-main: #efefef;
+                --accent-1: #aa1e55;
+                --accent-2: #ffebeb;
+                --accent-3: #efefef;
+
+                --text-1: #1c1c1c;
+                --text-2: #eaeaea;
+                --text-main: #1a1a1a;
+                --font-main: "Gill Sans", Helvetica, sans-serif;
+            }
+            /* Dark Mode (WIP) */
+            /*
+            @media (prefers-color-scheme: dark) {
+                :root {
+                    --accent-2: hsl(160, 100%, 96%);
+
+                    --text-1: #eaeaea;
+                    --text-2: #1a1a1a;
+                    --bg-main: #101010;
+                }
+
+                #table-bookmarks_wrapper,
+                #table-bookmarks_wrapper img,
+                tbody td:nth-child(3),
+                tbody td:nth-child(3) span,
+                footer {
+                    filter: invert(100%);
+                }
+            }*/
+
+            html, body {
+                width: 100%;
+                height: 100%;
+                font-size: 18px;
+                font-weight: 200;
+                text-align: center;
+                margin: 0px;
+                padding: 0px;
+                font-family: var(--font-main);
+            }
+
+            .header-top small {
+                font-weight: 200;
+                color: var(--accent-3);
+            }
+            
+            .header-top {
+                width: 100%;
+                height: auto;
+                min-height: 40px;
+                margin: 0px;
+                text-align: center;
+                color: white;
+                font-size: calc(11px + 0.84vw);
+                font-weight: 200;
+                padding: 4px 4px;
+                border-bottom: 3px solid var(--accent-1);
+                background-color: var(--accent-1);
+            }
+            input[type=search] {
+                width: 22vw;
+                border-radius: 4px;
+                border: 1px solid #aeaeae;
+                padding: 3px 5px;
+            }
+            .nav > div {
+                min-height: 30px;
+            }
+            .header-top a {
+                text-decoration: none;
+                color: rgba(0,0,0,0.6);
+            }
+            .header-top a:hover {
+                text-decoration: none;
+                color: rgba(0,0,0,0.9);
+            }
+            .header-top .col-lg-4 {
+                text-align: center;
+                padding-top: 4px;
+                padding-bottom: 4px;
+            }
+            .header-archivebox img {
+                display: inline-block;
+                margin-right: 3px;
+                height: 30px;
+                margin-left: 12px;
+                margin-top: -4px;
+                margin-bottom: 2px;
+            }
+            .header-archivebox img:hover {
+                opacity: 0.5;
+            }
+
+            #table-bookmarks_length, #table-bookmarks_filter {
+                padding-top: 12px;
+                opacity: 0.8;
+                padding-left: 24px;
+                padding-right: 22px;
+                margin-bottom: -16px;
+            }
+            table {
+                padding: 6px;
+                width: 100%;
+            }
+            table thead th {
+                font-weight: 400;
+            }
+            table tr {
+                height: 35px;
+            }
+            tbody tr:nth-child(odd) {
+               background-color: var(--accent-2) !important;
+            }
+            table tr td {
+                white-space: nowrap;
+                overflow: hidden;
+                /*padding-bottom: 0.4em;*/
+                /*padding-top: 0.4em;*/
+                padding-left: 2px;
+                text-align: center;
+            }
+            table tr td a {
+                text-decoration: none;
+            }
+            table tr td img, table tr td object {
+                display: inline-block;
+                margin: auto;
+                height: 24px;
+                width: 24px;
+                padding: 0px;
+                padding-right: 5px;
+                vertical-align: middle;
+                margin-left: 4px;
+            }
+            #table-bookmarks {
+                width: 100%; 
+                overflow-y: scroll;
+                table-layout: fixed;
+            }
+            .dataTables_wrapper {
+                background-color: #fafafa;
+            }
+            table tr a span[data-archived~=False] {
+                opacity: 0.4;
+            }
+            .files-spinner {
+                height: 15px;
+                width: auto;
+                opacity: 0.5;
+                vertical-align: -2px;
+            }
+            .in-progress {
+                display: none;
+            }
+            tr td a.favicon img {
+                padding-left: 6px;
+                padding-right: 12px;
+                vertical-align: -4px;
+            }
+            tr td a.title {
+                font-size: 1.4em;
+                text-decoration:none;
+                color:black;
+            }
+            tr td a.title small {
+                background-color: var(--accent-3);
+                border-radius: 4px;
+                float:right
+            }
+            input[type=search]::-webkit-search-cancel-button {
+                -webkit-appearance: searchfield-cancel-button;
+            }
+            .title-col {
+                text-align: left;
+            }
+            .title-col a {
+                color: black;
+            }
+        </style>
+        <link rel="stylesheet" href="/static/bootstrap.min.css">
+        <link rel="stylesheet" href="/static/jquery.dataTables.min.css"/>
+        <script src="/static/jquery.min.js"></script>
+        <script src="/static/jquery.dataTables.min.js"></script>
+        <script>
+            document.addEventListener('error', function(e) {
+              e.target.style.opacity = 0;
+            }, true)
+            jQuery(document).ready(function() {
+                jQuery('#table-bookmarks').DataTable({
+                    stateSave: true, // save state (filtered input, number of entries shown, etc) in localStorage
+                    dom: '<lf<t>ip>', // how to show the table and its helpers (filter, etc) in the DOM
+                    order: [[0, 'desc']],
+                    iDisplayLength: 100,
+                });
+            });
+        </script>
+    </head>
+    <body>
+        <header>
+            <div class="header-top container-fluid">
+                <div class="row nav">
+                    <div class="col-sm-2">
+                        <a href="/" class="header-archivebox">
+                            <img src="/static/archive.png" alt="Logo"/>
+                            ArchiveBox: Index
+                        </a>
+                    </div>
+                    <div class="col-sm-10" style="text-align: right">
+                        <a href="/add/">Add Links</a> &nbsp; | &nbsp; 
+                        <a href="/admin/core/snapshot/">Admin</a> &nbsp; | &nbsp; 
+                        <a href="https://github.com/ArchiveBox/ArchiveBox/wiki">Docs</a>
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <table id="table-bookmarks">
+            <thead>
+                <tr>
+                    <th class="snapshot-time">Saved</th>
+                    <th class="snapshot-preview-cell">Preview</th>
+                    <th>Snapshot (1)</th>
+                    <th class="snapshot-tags-cell">Tags</th>
+                    <th class="snapshot-status-cell">Status</th>
+                    <th class="snapshot-files-cell">Files</th>
+                    <th class="snapshot-size-cell">Size</th>
+                </tr>
+            </thead>
+            <tbody>
+                
+                   
+<tr class="snapshot-row status-sealed">
+    <td class="snapshot-time" title="Bookmarked: 2026-08-21 16:45:34.296247+00:00 (1787330734.296247)" data-sort="1787330734.296247">
+        <a href="http://snap-d6202124a695.archivebox.localhost:8000/index.html">
+            <span>2026-08-21</span>
+            <small>16:45</small>
+        </a>
+    </td>
+    <td class="snapshot-preview-cell">
+        <a href="http://snap-d6202124a695.archivebox.localhost:8000/index.html" title="Open archived snapshot">
+            <img src="http://snap-d6202124a695.archivebox.localhost:8000/screenshot/screenshot.png" data-fallbacks="" onerror="nextPublicSnapshotPreview(this)" class="snapshot-preview screenshot" alt="" decoding="async" loading="lazy">
+        </a>
+    </td>
+    <td class="snapshot-title-cell" title="🔴Live: Maryam Nawaz Addresses Conference | Dawn News Live - YouTube">
+        <div class="snapshot-title-line">
+            <a href="http://snap-d6202124a695.archivebox.localhost:8000/index.html" class="snapshot-favicon-link" title="Open archived snapshot">
+                <img src="http://snap-d6202124a695.archivebox.localhost:8000/favicon/favicon.ico" data-fallbacks="" onerror="nextPublicSnapshotPreview(this)" class="link-favicon" alt="" decoding="async" loading="lazy">
+            </a>
+            <a href="http://snap-d6202124a695.archivebox.localhost:8000/index.html" class="snapshot-title">
+                🔴Live: Maryam Nawaz Addresses Conference | Dawn News Live - YouTube
+            </a>
+        </div>
+        <a href="https://www.youtube.com/watch?v=U6SBgZbw9Cg" class="snapshot-url" title="https://www.youtube.com/watch?v=U6SBgZbw9Cg" target="_blank" rel="noopener noreferrer">
+            https://www.youtube.com/watch?v=U6SBgZbw9Cg
+        </a>
+        <span class="snapshot-mobile-saved">Saved 2026-08-21 at 16:45</span>
+    </td>
+    <td class="snapshot-tags-cell">
+        <span class="empty-value">...</span>
+    </td>
+    <td class="snapshot-status-cell">
+        <span class="snapshot-status">sealed</span>
+    </td>
+    <td class="snapshot-files-cell">
+        <span data-number-for="https://www.youtube.com/watch?v=U6SBgZbw9Cg" title="37 successful outputs">
+            <span class="files-icons" style="font-size: 1em; opacity: 0.8; display: inline-grid; grid-auto-flow: column; grid-auto-columns: auto; grid-template-rows: repeat(4, auto); gap: 0 0; justify-content: start; align-content: start;"><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/accessibility/accessibility.json" class="exists-True" title="accessibility"><span class="abx-output-icon abx-output-icon--accessibility" title="Accessibility"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4.5" r="2" fill="currentColor" stroke="none"/><path d="M4 7.5h16"/><path d="M12 7.5v12"/><path d="M7 20l5-6 5 6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/archivedotorg/archive.org.txt" class="exists-True" title="archivedotorg"><span class="abx-output-icon abx-output-icon--archivedotorg" title="Archive.org"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18"/><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 12h6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/archivewebpage/archivewebpage.wacz" class="exists-True" title="archivewebpage"><span class="abx-output-icon abx-output-icon--archivewebpage" title="ArchiveWebPage (WACZ)"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="1.5"/><path d="M3 11h18"/><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/><circle cx="8" cy="15.5" r="1" fill="currentColor"/><path d="M11 15.5h7"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/chrome/navigation.json" class="exists-True" title="chrome"><span class="abx-output-icon abx-output-icon--chrome" title="Chrome"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M3 9h18"/><circle cx="7" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="11" cy="7" r="1" fill="currentColor" stroke="none"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/chrome_mhtml/snapshot.mhtml" class="exists-True" title="chrome_mhtml"><span class="abx-output-icon abx-output-icon--chrome-mhtml" title="Chrome MHTML"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v13A2.5 2.5 0 0 1 17.5 21h-11A2.5 2.5 0 0 1 4 18.5z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/None" class="exists-True" title="chrome_screencast">📁</a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/consolelog/console.jsonl" class="exists-True" title="consolelog"><span class="abx-output-icon abx-output-icon--consolelog" title="Console Log"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7 12l2 2-2 2"/><path d="M11 16h6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/defuddle/content.html" class="exists-True" title="defuddle"><span class="abx-output-icon abx-output-icon--defuddle" title="Defuddle"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h6"/><path d="M7 13h7"/><path d="M17 7.5v5"/><path d="M14.5 10h5"/><path d="M15.2 8.2l3.6 3.6"/><path d="M18.8 8.2l-3.6 3.6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/dns/dns.jsonl" class="exists-True" title="dns"><span class="abx-output-icon abx-output-icon--dns" title="DNS"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 12h6"/><path d="M16 8l-2 2"/><path d="M16 16l-2-2"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/dom/output.html" class="exists-True" title="dom"><span class="abx-output-icon abx-output-icon--dom" title="DOM"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l-3 3 3 3"/><path d="M16 9l3 3-3 3"/><path d="M10 20l4-16"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/favicon/favicon.ico" class="exists-True" title="favicon"><span class="abx-output-icon abx-output-icon--favicon" title="Favicon"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.5 5.5 6 .5-4.5 3.8 1.5 5.7L12 15.5 6.5 18.5 8 12.8 3.5 9l6-.5z"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/hashes/hashes.json" class="exists-True" title="hashes"><span class="abx-output-icon abx-output-icon--hashes" title="Authenticity Hashes"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="18" r="2"/><path d="M12 7v6"/><path d="M12 13l-4 3"/><path d="M12 13l4 3"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/headers/headers.json" class="exists-True" title="headers"><span class="abx-output-icon abx-output-icon--headers" title="Headers"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4" cy="7" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="17" r="1" fill="currentColor" stroke="none"/><path d="M7 7h13"/><path d="M7 12h13"/><path d="M7 17h13"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/htmltotext/htmltotext.txt" class="exists-True" title="htmltotext"><span class="abx-output-icon abx-output-icon--htmltotext" title="HTML to Text"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M4 12h12"/><path d="M4 17h14"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/None" class="exists-True" title="infiniscroll"><span class="abx-output-icon abx-output-icon--infiniscroll" title="Infinite Scroll"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v9"/><path d="M8 10l4 4 4-4"/><circle cx="6" cy="19" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1" fill="currentColor" stroke="none"/><circle cx="18" cy="19" r="1" fill="currentColor" stroke="none"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/liteparse/20260821T164629__GET__https_3A_2F_2Fi.ytimg.com_2Fvi_2FU6SBgZbw9Cg_2Fhqdefault.jpg.txt" class="exists-True" title="liteparse">📁</a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/mercury/content.html" class="exists-True" title="mercury"><span class="abx-output-icon abx-output-icon--mercury" title="Mercury"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h6"/><path d="M7 13h10"/><path d="M15 9h3"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/None" class="exists-True" title="modalcloser"><span class="abx-output-icon abx-output-icon--modalcloser" title="Modal Closer"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9l6 6"/><path d="M15 9l-6 6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/parse_dom_outlinks/urls.jsonl" class="exists-True" title="parse_dom_outlinks"><span class="abx-output-icon abx-output-icon--parse_dom_outlinks" title="Outlinks"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a4 4 0 0 1 0-6l2-2a4 4 0 0 1 6 6l-1 1"/><path d="M14 11a4 4 0 0 1 0 6l-2 2a4 4 0 0 1-6-6l1-1"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/parse_html_urls/urls.jsonl" class="exists-True" title="parse_html_urls"><span class="abx-output-icon abx-output-icon--parse_html_urls" title="HTML URLs"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l-3 3 3 3"/><path d="M16 9l3 3-3 3"/><path d="M10 20l4-16"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/parse_txt_urls/urls.jsonl" class="exists-True" title="parse_txt_urls"><span class="abx-output-icon abx-output-icon--parse_txt_urls" title="Text URLs"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M8 12h8"/><path d="M8 16h6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/pdf/output.pdf" class="exists-True" title="pdf"><span class="abx-output-icon abx-output-icon--pdf" title="PDF"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><rect x="8" y="12" width="8" height="4" rx="1"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/readability/content.html" class="exists-True" title="readability"><span class="abx-output-icon abx-output-icon--readability" title="Readability"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h7a3 3 0 0 1 3 3v10H6a3 3 0 0 0-3 3z"/><path d="M21 6h-7a3 3 0 0 0-3 3v10h7a3 3 0 0 1 3 3z"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/redirects/redirects.jsonl" class="exists-True" title="redirects"><span class="abx-output-icon abx-output-icon--redirects" title="Redirects"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11"/><path d="M12 4l3 3-3 3"/><path d="M20 17H9"/><path d="M12 14l-3 3 3 3"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/responses/all/20260821T164629__GET__https_3A_2F_2Fwww.youtube.com_2Fwatch_3Fv_3DU6SBgZbw9Cg.html" class="exists-True" title="responses"><span class="abx-output-icon abx-output-icon--responses" title="Responses"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="6" rx="2"/><rect x="4" y="13.5" width="16" height="6" rx="2"/><circle cx="8" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="8" cy="16.5" r="1" fill="currentColor" stroke="none"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/screenshot/screenshot.png" class="exists-True" title="screenshot"><span class="abx-output-icon abx-output-icon--screenshot" title="Screenshot"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M8 6l1.5-2h5L16 6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/None" class="exists-True" title="search_backend_sonic"><span class="abx-output-icon abx-output-icon--search_backend_sonic" title="Search"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="5"/><path d="M16 16l4 4"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/seo/seo.json" class="exists-True" title="seo"><span class="abx-output-icon abx-output-icon--seo" title="SEO"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l6-6 4 4 6-6"/><path d="M14 8h6v6"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/singlefile/singlefile.html" class="exists-True" title="singlefile"><span class="abx-output-icon abx-output-icon--singlefile" title="SingleFile"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M9 14l2 2 4-4"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/sslcerts/sslcerts.jsonl" class="exists-True" title="sslcerts"><span class="abx-output-icon abx-output-icon--sslcerts" title="SSL Certificates"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/title/title.txt" class="exists-True" title="title"><span class="abx-output-icon abx-output-icon--title" title="Title"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l8-8h9v9l-8 8-9-9z"/><circle cx="16" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/trafilatura/content.txt" class="exists-True" title="trafilatura"><span class="abx-output-icon abx-output-icon--trafilatura" title="Trafilatura"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h10"/><path d="M8.5 12h7"/><path d="M10.5 15h3"/><path d="M12 15v3"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/None" class="exists-True" title="ublock"><span class="abx-output-icon abx-output-icon--ublock" title="uBlock"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l6 2.5v5.5c0 4.1-2.5 7.6-6 10-3.5-2.4-6-5.9-6-10V5.5z"/><path d="M8 12h8"/><path d="M9.5 9.5l5 5"/></svg></span></a><a href="/web/20260821/www.youtube.com/06a8880ae4be713a8000d6202124a695/wget/accounts.google.com/ServiceLogin@service=youtube&amp;uilel=3&amp;passive=true&amp;continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin=true&amp;app=desktop&amp;hl=en&amp;next=%2Fsignin_passive&amp;feature=passive&amp;hl=en.html" class="exists-True" title="wget"><span class="abx-output-icon abx-output-icon--wget" title="Wget"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10"/><path d="M8 10l4 4 4-4"/><path d="M4 20h16"/></svg></span></a></span>
+        </span>
+    </td>
+    <td class="snapshot-size-cell">
+        <a href="http://snap-d6202124a695.archivebox.localhost:8000/?files=1" title="View archived files">
+            122.0 MB
+        </a>
+        <small>37 outputs</small>
+    </td>
+</tr>
+
+                
+            </tbody>
+        </table>
+        <footer>
+            <br/>
+            <center>
+                <small>
+                    Archive created using <a href="https://github.com/ArchiveBox/ArchiveBox" title="Github">ArchiveBox</a>
+                    version <a href="https://github.com/ArchiveBox/ArchiveBox/releases/tag/v0.9.35rc256" title="View source code and release info">v0.9.35rc256</a> &nbsp; | &nbsp; 
+                    Download index as <a href="index.json" title="JSON summary of archived links.">JSON</a>
+                    <br/><br/>
+                    Content is hosted for personal archiving purposes only.  Contact server owner for any takedown requests.
+                </small>
+            </center>
+            <br/>
+        </footer>
+    </body>
+</html>

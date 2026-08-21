@@ -1,0 +1,60 @@
+{
+  "ready": true,
+  "extensions": [
+    {
+      "webstore_id": "fpeoodllldobpkbkabpblcfaogecpndd",
+      "name": "archivewebpage",
+      "webstore_url": "https://chromewebstore.google.com/detail/fpeoodllldobpkbkabpblcfaogecpndd",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dfpeoodllldobpkbkabpblcfaogecpndd%26uc",
+      "crx_path": "/opt/archivebox/lib/chromewebstore/extensions/fpeoodllldobpkbkabpblcfaogecpndd__archivewebpage.crx",
+      "unpacked_path": "/opt/archivebox/lib/chromewebstore/extensions/fpeoodllldobpkbkabpblcfaogecpndd__archivewebpage",
+      "version": "0.16.2",
+      "id": "defjmbbknfellijpcjkcchfkbkkmgeod",
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "edibdbjcniadpccecjdfdjjppcpchdlm",
+      "name": "istilldontcareaboutcookies",
+      "webstore_url": "https://chromewebstore.google.com/detail/edibdbjcniadpccecjdfdjjppcpchdlm",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dedibdbjcniadpccecjdfdjjppcpchdlm%26uc",
+      "crx_path": "/opt/archivebox/lib/chromewebstore/extensions/edibdbjcniadpccecjdfdjjppcpchdlm__istilldontcareaboutcookies.crx",
+      "unpacked_path": "/opt/archivebox/lib/chromewebstore/extensions/edibdbjcniadpccecjdfdjjppcpchdlm__istilldontcareaboutcookies",
+      "version": "1.1.9",
+      "id": "hlhfaoofigogphlhhpddnpbbellogdnn",
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "mpiodijhokgodhhofbcjdecpffjipkle",
+      "name": "singlefile",
+      "webstore_url": "https://chromewebstore.google.com/detail/mpiodijhokgodhhofbcjdecpffjipkle",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dmpiodijhokgodhhofbcjdecpffjipkle%26uc",
+      "crx_path": "/opt/archivebox/lib/chromewebstore/extensions/mpiodijhokgodhhofbcjdecpffjipkle__singlefile.crx",
+      "unpacked_path": "/opt/archivebox/lib/chromewebstore/extensions/mpiodijhokgodhhofbcjdecpffjipkle__singlefile",
+      "version": "1.22.98",
+      "id": "pmdhahmmencbhpeakojfghnhpckmdjdp",
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "ifibfemgeogfhoebkmokieepdoobkbpo",
+      "name": "twocaptcha",
+      "webstore_url": "https://chromewebstore.google.com/detail/ifibfemgeogfhoebkmokieepdoobkbpo",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Difibfemgeogfhoebkmokieepdoobkbpo%26uc",
+      "crx_path": "/opt/archivebox/lib/chromewebstore/extensions/ifibfemgeogfhoebkmokieepdoobkbpo__twocaptcha.crx",
+      "unpacked_path": "/opt/archivebox/lib/chromewebstore/extensions/ifibfemgeogfhoebkmokieepdoobkbpo__twocaptcha",
+      "version": "3.7.4",
+      "id": "mmpcaabkjocffehggbdjckkocckcecba",
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "ddkjiahejlhfcafbddmgiahcphecmpfh",
+      "name": "ublock",
+      "webstore_url": "https://chromewebstore.google.com/detail/ddkjiahejlhfcafbddmgiahcphecmpfh",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dddkjiahejlhfcafbddmgiahcphecmpfh%26uc",
+      "crx_path": "/opt/archivebox/lib/chromewebstore/extensions/ddkjiahejlhfcafbddmgiahcphecmpfh__ublock.crx",
+      "unpacked_path": "/opt/archivebox/lib/chromewebstore/extensions/ddkjiahejlhfcafbddmgiahcphecmpfh__ublock",
+      "version": "2026.723.1724",
+      "id": "aoomcbfabdiildpafflghpblmbgfpmao",
+      "manifest_version": 3
+    }
+  ]
+}

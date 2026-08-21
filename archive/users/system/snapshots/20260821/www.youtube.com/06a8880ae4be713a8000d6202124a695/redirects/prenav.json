@@ -1,0 +1,9 @@
+{
+  "phase": "pre_navigation",
+  "status": "ready",
+  "plugin": "redirects",
+  "hook": "on_Snapshot__25_redirects.daemon.bg.js",
+  "pid": 872,
+  "url": "https://www.youtube.com/watch?v=U6SBgZbw9Cg",
+  "timestamp": "2026-08-21T16:46:22.271Z"
+}
