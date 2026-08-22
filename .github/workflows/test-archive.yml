@@ -13,25 +13,31 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   archive:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout this exact fork/commit
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
 
-      - name: Create archive directory
+      - name: Create archive directories
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
+          mkdir -p "$GITHUB_WORKSPACE/public"
 
-      - name: Run ArchiveBox (init + add URL)
+      - name: Run ArchiveBox
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
@@ -43,104 +49,44 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Generate static site
+      - name: Exact ArchiveBox Static Export Method
         run: |
-          set -euo pipefail
-      
-          rm -rf "$GITHUB_WORKSPACE/static_site"
-          mkdir -p "$GITHUB_WORKSPACE/static_site"
-      
-          # Generate the static index.
+          # Exact command prescribed by official documentation for static deployment
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
-            --entrypoint archivebox \
             my-archivebox \
-            list --html --with-headers \
-            > "$GITHUB_WORKSPACE/static_site/index.html"
-      
-          # The ArchiveBox index references files under ./archive/.
-          # Copy ONLY the archive content, not the ArchiveBox runtime/data directory.
-          cp -a "$GITHUB_WORKSPACE/archive/archive" \
-                "$GITHUB_WORKSPACE/static_site/archive"
-      
-          # Remove ArchiveBox plugin/runtime artifacts recursively.
-          find "$GITHUB_WORKSPACE/static_site/archive" \
-            -type d -name 'ublock' \
-            -prune -exec rm -rf {} +
-      
-          find "$GITHUB_WORKSPACE/static_site/archive" \
-            -type d -name 'responses' \
-            -prune -exec rm -rf {} +
-      
-          # Remove executable/script artifacts recursively.
-          find "$GITHUB_WORKSPACE/static_site/archive" \
-            -type f \( \
-              -name '*.sh' -o \
-              -name '*.exe' -o \
-              -name '*.bin' \
-            \) -delete
-      
-          touch "$GITHUB_WORKSPACE/static_site/.nojekyll"
-      
-          echo "=== Static site ==="
-          find "$GITHUB_WORKSPACE/static_site" -maxdepth 3 -print
-          echo "=== Size ==="
-          du -sh "$GITHUB_WORKSPACE/static_site"
-          
-      - name: Show exported files (sample)
-        run: |
-          echo "Exported static files (sample):"
-          find archive/output_static -maxdepth 6 -type f | sort | head -200 || true
+            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
 
-      - name: Publish static site to gh-pages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
+
+      - name: Prepare Folder Structural Routing
         run: |
-          set -euo pipefail
-      
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-      
-          cd "$GITHUB_WORKSPACE"
-      
-          git fetch origin
-      
-          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
-            git checkout -B gh-pages origin/gh-pages
-          else
-            git checkout --orphan gh-pages
-            git rm -rf . || true
+          # Copy target items out to the decoupled deployment path
+          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
+          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
+            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
           fi
-      
-          # Remove EVERYTHING currently on gh-pages.
-          find . -mindepth 1 -maxdepth 1 \
-            ! -name .git \
-            -exec rm -rf {} +
-      
-          # Copy ONLY the prepared static site.
-          cp -a "$GITHUB_WORKSPACE/static_site/." .
-      
-          touch .nojekyll
-      
-          echo "=== Files being published ==="
-          find . -maxdepth 4 -type f | sort | head -300
-      
-          echo "=== Checking for unwanted ArchiveBox runtime directories ==="
-          if find . -maxdepth 1 -type d \
-            \( -name lib -o -name machines -o -name machine -o -name logs \) \
-            | grep -q .; then
-            echo "ERROR: ArchiveBox runtime directories found at site root"
-            exit 1
-          fi
-      
-          git add -A
-          git commit -m "Publish ArchiveBox static site [skip ci]" || true
-          git push --force \
-            "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" \
-            gh-pages
-      
-      - name: Upload test output (full archive) for debugging
+
+      - name: Show result
+        run: |
+          find public -maxdepth 4 -type f | sort
+
+      - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: archive-test-output
-          path: archive/
+          name: archive-static-download-folder
+          path: public/
+          retention-days: 90
+
+      - name: Upload GitHub Pages Target Build
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
