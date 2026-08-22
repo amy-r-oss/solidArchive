@@ -51,7 +51,7 @@ jobs:
 
       - name: Exact ArchiveBox Static Export Method
         run: |
-          # Exact command prescribed by official documentation for static deployment
+          # 1. Use the generic list command to output the root navigation files
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
@@ -62,33 +62,38 @@ jobs:
             my-archivebox \
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
 
+      - name: Prepare Folder Structural Routing
+        run: |
+          # Clean old directories and map correct deployment paths
+          mkdir -p "$GITHUB_WORKSPACE/public"
+          
+          # Move base indexes
+          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
+          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
+          
+          # Copy everything within the data storage archive directory cleanly 
+          # This catches both old timestamp styles and newer user multi-tenant storage layouts
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
+            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
+          fi
+
       - name: View All Folders and Archived URLs
         run: |
           echo "============================================="
-          echo "📂 DIRECTORY STRUCTURE (Top Levels)"
+          echo "📂 DEPLOYMENT DIRECTORY STRUCTURE"
           echo "============================================="
-          find "$GITHUB_WORKSPACE/archive" -maxdepth 3 -type d | sort
+          # Lists folders up to 6 levels down to expose deep snapshot assets
+          find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
 
           echo ""
           echo "============================================="
           echo "🔗 ALL ARCHIVED URLS IN DATABASE"
           echo "============================================="
-          # Uses the container's built-in tool to list all tracked entries
+          # Replaced broken status argument with valid base command
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --status=indexed
-
-
-
-      - name: Prepare Folder Structural Routing
-        run: |
-          # Copy target items out to the decoupled deployment path
-          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
-          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
-          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
-            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
-          fi
+            list
 
       - name: Show result
         run: |
