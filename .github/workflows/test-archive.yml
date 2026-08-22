@@ -51,7 +51,7 @@ jobs:
 
       - name: Exact ArchiveBox Static Export Method
         run: |
-          # 1. Use the generic list command to output the root navigation files
+          # The exact method prescribed by the documentation for static rendering
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
@@ -64,39 +64,41 @@ jobs:
 
       - name: Prepare Folder Structural Routing
         run: |
-          # Clean old directories and map correct deployment paths
-          mkdir -p "$GITHUB_WORKSPACE/public"
-          
-          # Move base indexes
+          # 1. Clear old targets and place index files in the root
           cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
           cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # Copy everything within the data storage archive directory cleanly 
-          # This catches both old timestamp styles and newer user multi-tenant storage layouts
-          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
-            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
-          fi
+          # 2. Sync everything recursively using rsync.
+          # This captures all nested users directories AND random numeric timestamp folders.
+          rsync -av \
+            --exclude='*.sqlite3*' \
+            --exclude='logs/' \
+            --exclude='sources/' \
+            "$GITHUB_WORKSPACE/archive/" "$GITHUB_WORKSPACE/public/"
 
-      - name: View All Folders and Archived URLs
+      - name: Calculate and View Real GitHub Pages URLs
         run: |
           echo "============================================="
-          echo "📂 DEPLOYMENT DIRECTORY STRUCTURE"
+          echo "🌐 BASE WEB HOSTING ADDRESS"
           echo "============================================="
-          find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
-
+          BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
+          echo "Dashboard: $BASE_URL/index.html"
           echo ""
+          
           echo "============================================="
-          echo "🔗 ALL ARCHIVED URLS IN DATABASE"
+          echo "🔗 LIVE ARCHIVED SNAPSHOT LINK LOCATIONS"
           echo "============================================="
-          # Formats the JSON list stream to display plain URL addresses
+          # Safer processing bypasses jq arrays by reading the output index keys directly
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json | jq -r '.url'
-
-      - name: Show result
-        run: |
-          find public -maxdepth 4 -type f | sort
+            list --json | grep -oE '"path": "[^"]+"' | sed 's/"path": "//;s/"//' | while read -r snapshot_path; do
+              if [ -n "$snapshot_path" ]; then
+                echo "Snapshot View URL: $BASE_URL/$snapshot_path/index.html"
+                echo "Direct Video/Media Folder: $BASE_URL/$snapshot_path/"
+                echo "---------------------------------------------"
+              fi
+            done
 
       - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
