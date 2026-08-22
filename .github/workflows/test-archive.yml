@@ -64,19 +64,18 @@ jobs:
 
       - name: Prepare Folder Structural Routing
         run: |
+          # Clean old directories and map correct deployment paths
           mkdir -p "$GITHUB_WORKSPACE/public"
           
-          # Move base indexes compiled using the exact method
+          # Move base indexes
           cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
           cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # Sync absolutely everything (including loose numeric timestamp folders)
-          # while ignoring lockfiles or system databases
-          rsync -av \
-            --exclude='logs/' \
-            "$GITHUB_WORKSPACE/archive/" "$GITHUB_WORKSPACE/public/"
-        # --exclude='*.sqlite3*' \
-        # --exclude='sources/' \
+          # Copy everything within the data storage archive directory cleanly 
+          # This catches both old timestamp styles and newer user multi-tenant storage layouts
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
+            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
+          fi
 
       - name: View All Folders and Archived URLs
         run: |
@@ -89,11 +88,11 @@ jobs:
           echo "============================================="
           echo "🔗 ALL ARCHIVED URLS IN DATABASE"
           echo "============================================="
-          # Fixed syntax: loops over the JSON array to extract plain URLs cleanly
+          # Formats the JSON list stream to display plain URL addresses
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json | jq -r '.[] | .url'
+            list --json | jq -r '.url'
 
       - name: Show result
         run: |
