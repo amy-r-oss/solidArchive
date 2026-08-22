@@ -62,6 +62,25 @@ jobs:
             my-archivebox \
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
 
+      - name: View All Folders and Archived URLs
+        run: |
+          echo "============================================="
+          echo "📂 DIRECTORY STRUCTURE (Top Levels)"
+          echo "============================================="
+          find "$GITHUB_WORKSPACE/archive" -maxdepth 3 -type d | sort
+
+          echo ""
+          echo "============================================="
+          echo "🔗 ALL ARCHIVED URLS IN DATABASE"
+          echo "============================================="
+          # Uses the container's built-in tool to list all tracked entries
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --status=indexed
+
+
+
       - name: Prepare Folder Structural Routing
         run: |
           # Copy target items out to the decoupled deployment path
