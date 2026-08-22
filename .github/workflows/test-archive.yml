@@ -82,18 +82,17 @@ jobs:
           echo "============================================="
           echo "📂 DEPLOYMENT DIRECTORY STRUCTURE"
           echo "============================================="
-          # Lists folders up to 6 levels down to expose deep snapshot assets
           find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
 
           echo ""
           echo "============================================="
           echo "🔗 ALL ARCHIVED URLS IN DATABASE"
           echo "============================================="
-          # Replaced broken status argument with valid base command
+          # Formats the JSON list stream to display plain URL addresses
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list
+            list --json | jq -r '.url'
 
       - name: Show result
         run: |
