@@ -62,7 +62,7 @@ jobs:
             my-archivebox \
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
 
-           - name: Prepare Folder Structural Routing
+      - name: Prepare Folder Structural Routing
         run: |
           # 1. Fresh start for the deployment root folder
           rm -rf "$GITHUB_WORKSPACE/public"
