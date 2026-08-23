@@ -47,7 +47,7 @@ jobs:
             add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
         run: |
-          # The exact method prescribed by the documentation for static rendering
+          # 1. Use the generic list command to output the root navigation files
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
@@ -58,51 +58,37 @@ jobs:
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
       - name: Prepare Folder Structural Routing
         run: |
-          # 1. Fresh start for the deployment root folder
-          rm -rf "$GITHUB_WORKSPACE/public"
+          # Clean old directories and map correct deployment paths
           mkdir -p "$GITHUB_WORKSPACE/public"
           
-          # 2. Copy the main static index files into the deployment root
+          # Move base indexes
           cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
           cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # 3. Only copy your true snapshot data paths
-          # This catches the newer user layout: archive/archive/users/...
-          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then
-            echo "Copying modern multi-user data structures..."
+          # Copy everything within the data storage archive directory cleanly 
+          # This catches both old timestamp styles and newer user multi-tenant storage layouts
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
             cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
           fi
-          # This catches classic numeric timestamp folders (like 1787390968.799274)
-          # while ignoring system/temp/binary folders completely
-          echo "Copying standalone timestamp snapshot folders..."
-          find "$GITHUB_WORKSPACE/archive" -maxdepth 1 -type d -name "[0-9]*" | while read -r folder; do
-            if [ -n "$folder" ]; then
-              cp -r "$folder" "$GITHUB_WORKSPACE/public/"
-            fi
-          done
-      - name: Calculate and View Real GitHub Pages URLs
+      - name: View All Folders and Archived URLs
         run: |
           echo "============================================="
-          echo "🌐 BASE WEB HOSTING ADDRESS"
+          echo "📂 DEPLOYMENT DIRECTORY STRUCTURE"
           echo "============================================="
-          BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          echo "Dashboard: $BASE_URL/index.html"
+          # Lists folders up to 6 levels down to expose deep snapshot assets
+          find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
           echo ""
-          
           echo "============================================="
-          echo "🔗 LIVE ARCHIVED SNAPSHOT LINK LOCATIONS"
+          echo "🔗 ALL ARCHIVED URLS IN DATABASE"
           echo "============================================="
-          # Safer processing bypasses jq arrays by reading the output index keys directly
+          # Replaced broken status argument with valid base command
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json | grep -oE '"path": "[^"]+"' | sed 's/"path": "//;s/"//' | while read -r snapshot_path; do
-              if [ -n "$snapshot_path" ]; then
-                echo "Snapshot View URL: $BASE_URL/$snapshot_path/index.html"
-                echo "Direct Video/Media Folder: $BASE_URL/$snapshot_path/"
-                echo "---------------------------------------------"
-              fi
-            done
+            list
+      - name: Show result
+        run: |
+          find public -maxdepth 4 -type f | sort
       - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
         with:
