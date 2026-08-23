@@ -78,14 +78,29 @@ jobs:
           # Lists folders up to 6 levels down to expose deep snapshot assets
           find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
           echo ""
-          echo "============================================="
-          echo "🔗 ALL ARCHIVED URLS IN DATABASE"
-          echo "============================================="
-          # Replaced broken status argument with valid base command
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            list
+          echo "================================================================="
+          echo "📁 ALL UPLOADED FILES & THEIR ACCESSIBLE LINKS"
+          echo "================================================================="
+          cd "$GITHUB_WORKSPACE/public"
+          
+          # Find all normal files recursively
+          find . -type f | sort | while read -r file_path; do
+            # Remove the leading './' from the file path
+            clean_path=$(echo "$file_path" | sed 's|^\./||')
+            
+            # Combine the base URL with the file path for easy access
+            echo "File: $clean_path"
+            echo "Link: $BASE_URL/$clean_path"
+            echo "-----------------------------------------------------------------"
+          done
+        # echo "============================================="
+        # echo "🔗 ALL ARCHIVED URLS IN DATABASE"
+        # echo "============================================="
+        # # Replaced broken status argument with valid base command
+        # docker run --rm \
+        #   -v "$GITHUB_WORKSPACE/archive:/data" \
+        #   my-archivebox \
+        #   list
       - name: Show result
         run: |
           find public -maxdepth 4 -type f | sort
