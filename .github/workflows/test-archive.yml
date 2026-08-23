@@ -31,100 +31,86 @@ jobs:
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
-
       - name: Create archive directories
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
           mkdir -p "$GITHUB_WORKSPACE/public"
-
       - name: Run ArchiveBox
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
-
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             add "${{ inputs.url }}"
-
-      - name: Generate Static Index (Official Method for GitHub Pages)
+      - name: Exact ArchiveBox Static Export Method
         run: |
-          # Official ArchiveBox method for static HTML generation
+          # The exact method prescribed by the documentation for static rendering
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            generate-static-index
-
-      - name: Generate List Indexes
-        run: |
-          # Generate HTML and JSON list views for browsing
+            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > "$GITHUB_WORKSPACE/archive/list.html"
-
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            list --json --with-headers > "$GITHUB_WORKSPACE/archive/list.json"
-
-      - name: Prepare Folder Structure for GitHub Pages
+            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
+      - name: Prepare Folder Structural Routing
         run: |
           # 1. Fresh start for the deployment root folder
           rm -rf "$GITHUB_WORKSPACE/public"
           mkdir -p "$GITHUB_WORKSPACE/public"
           
-          # 2. Copy generated static index files
-          if [ -f "$GITHUB_WORKSPACE/archive/index.html" ]; then
-            echo "✅ Copying generated static index..."
-            cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
-          fi
+          # 2. Copy the main static index files into the deployment root
+          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
+          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # 3. Copy list views
-          cp "$GITHUB_WORKSPACE/archive/list.html" "$GITHUB_WORKSPACE/public/" || true
-          cp "$GITHUB_WORKSPACE/archive/list.json" "$GITHUB_WORKSPACE/public/" || true
-          
-          # 4. Copy archive data (snapshots and extracted content)
+          # 3. Only copy your true snapshot data paths
+          # This catches the newer user layout: archive/archive/users/...
           if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then
-            echo "✅ Copying archive snapshot data..."
+            echo "Copying modern multi-user data structures..."
             cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
           fi
-
-          # 5. Copy any web directory data
-          if [ -d "$GITHUB_WORKSPACE/archive/web" ]; then
-            echo "✅ Copying web snapshot data..."
-            cp -r "$GITHUB_WORKSPACE/archive/web" "$GITHUB_WORKSPACE/public/"
-          fi
-
-          # 6. List what we're deploying
-          echo ""
-          echo "📦 Files ready for GitHub Pages deployment:"
-          find "$GITHUB_WORKSPACE/public" -type f | head -10
-          echo "..."
-          echo "Total files: $(find $GITHUB_WORKSPACE/public -type f | wc -l)"
-
-      - name: Display GitHub Pages URLs
+          # This catches classic numeric timestamp folders (like 1787390968.799274)
+          # while ignoring system/temp/binary folders completely
+          echo "Copying standalone timestamp snapshot folders..."
+          find "$GITHUB_WORKSPACE/archive" -maxdepth 1 -type d -name "[0-9]*" | while read -r folder; do
+            if [ -n "$folder" ]; then
+              cp -r "$folder" "$GITHUB_WORKSPACE/public/"
+            fi
+          done
+      - name: Calculate and View Real GitHub Pages URLs
         run: |
           echo "============================================="
-          echo "✅ ARCHIVE READY FOR GITHUB PAGES"
+          echo "🌐 BASE WEB HOSTING ADDRESS"
           echo "============================================="
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          echo "📍 Your archive will be available at:"
-          echo "   $BASE_URL/index.html"
+          echo "Dashboard: $BASE_URL/index.html"
           echo ""
-          echo "📄 Browse all links:"
-          echo "   $BASE_URL/list.html"
-
-      - name: Upload Static Archive Artifact
+          
+          echo "============================================="
+          echo "🔗 LIVE ARCHIVED SNAPSHOT LINK LOCATIONS"
+          echo "============================================="
+          # Safer processing bypasses jq arrays by reading the output index keys directly
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --json | grep -oE '"path": "[^"]+"' | sed 's/"path": "//;s/"//' | while read -r snapshot_path; do
+              if [ -n "$snapshot_path" ]; then
+                echo "Snapshot View URL: $BASE_URL/$snapshot_path/index.html"
+                echo "Direct Video/Media Folder: $BASE_URL/$snapshot_path/"
+                echo "---------------------------------------------"
+              fi
+            done
+      - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: archive-static-export
+          name: archive-static-download-folder
           path: public/
           retention-days: 90
 
-      - name: Upload to GitHub Pages
+      - name: Upload GitHub Pages Target Build
         uses: actions/upload-pages-artifact@v3
         with:
           path: public/
