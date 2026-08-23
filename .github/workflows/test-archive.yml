@@ -49,15 +49,15 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Extract and Prepare for Static Hosting (Official Method)
+      - name: Export as Static HTML (Official Method for GitHub Pages)
         run: |
-          # Official ArchiveBox method for static export
+          # Official ArchiveBox method for static export to GitHub Pages
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            extract
+            export --html /data/static-export
 
-      - name: Generate Static Index Files
+      - name: Generate Index Files
         run: |
           # Generate HTML and JSON indexes for browsing
           docker run --rm \
@@ -76,31 +76,28 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/public"
           mkdir -p "$GITHUB_WORKSPACE/public"
           
-          # 2. Copy the main static index files into the deployment root
-          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
-          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/" || true
-          
-          # 3. Copy archive data (modern multi-user layout)
-          # This catches: archive/users/...
-          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then
-            echo "✅ Copying modern multi-user archive structures..."
-            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
+          # 2. Copy exported static HTML content
+          if [ -d "$GITHUB_WORKSPACE/archive/static-export" ]; then
+            echo "✅ Copying static HTML export..."
+            cp -r "$GITHUB_WORKSPACE/archive/static-export"/* "$GITHUB_WORKSPACE/public/"
           fi
           
-          # 4. Copy any extracted snapshot data
-          # This catches classic numeric timestamp folders (like 1787390968.799274)
-          echo "✅ Copying extracted snapshot folders..."
-          find "$GITHUB_WORKSPACE/archive" -maxdepth 1 -type d -name "[0-9]*" | while read -r folder; do
-            if [ -n "$folder" ]; then
-              echo "  Copying: $(basename $folder)"
-              cp -r "$folder" "$GITHUB_WORKSPACE/public/"
-            fi
-          done
+          # 3. Copy the index files
+          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/index-archive.html" || true
+          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/index-archive.json" || true
+          
+          # 4. Copy archive data (modern multi-user layout)
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then
+            echo "✅ Copying archive snapshot data..."
+            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
+          fi
 
           # 5. List what we're deploying
           echo ""
           echo "📦 Files ready for GitHub Pages deployment:"
-          ls -lah "$GITHUB_WORKSPACE/public/"
+          find "$GITHUB_WORKSPACE/public" -type f -name "index.html" | head -5
+          echo "..."
+          echo "Total files: $(find $GITHUB_WORKSPACE/public -type f | wc -l)"
 
       - name: Calculate and Display GitHub Pages URLs
         run: |
@@ -108,25 +105,13 @@ jobs:
           echo "🌐 BASE WEB HOSTING ADDRESS"
           echo "============================================="
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          echo "📍 Dashboard: $BASE_URL/index.html"
+          echo "📍 Main Dashboard: $BASE_URL/index.html"
           echo ""
           
           echo "============================================="
-          echo "🔗 LIVE ARCHIVED SNAPSHOT LINK LOCATIONS"
+          echo "✅ DEPLOYMENT COMPLETE - Your archive is ready!"
           echo "============================================="
-          # Extract snapshot paths from JSON and build proper GitHub Pages URLs
-          if [ -f "$GITHUB_WORKSPACE/archive/index.json" ]; then
-            docker run --rm \
-              -v "$GITHUB_WORKSPACE/archive:/data" \
-              my-archivebox \
-              list --json | grep -oE '"path": "[^"]+"' | sed 's/"path": "//;s/"//' | while read -r snapshot_path; do
-              if [ -n "$snapshot_path" ]; then
-                echo "📄 Snapshot: $BASE_URL/$snapshot_path/index.html"
-                echo "📁 Media Folder: $BASE_URL/$snapshot_path/"
-                echo "---------------------------------------------"
-              fi
-            done
-          fi
+          echo "Access your archive at: $BASE_URL"
 
       - name: Upload Static Archive Artifact
         uses: actions/upload-artifact@v4
