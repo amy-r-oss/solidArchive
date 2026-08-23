@@ -79,17 +79,17 @@ jobs:
           find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
           echo ""
           echo "================================================================="
-          echo "📁 ALL UPLOADED FILES & THEIR ACCESSIBLE LINKS"
+          echo "📄 ALL UPLOADED WEB PAGES (.HTML)"
           echo "================================================================="
           cd "$GITHUB_WORKSPACE/public"
           
-          # Find all normal files recursively
-          find . -type f | sort | while read -r file_path; do
+          # Find only files that end with the .html extension
+          find . -type f -name "*.html" | sort | while read -r file_path; do
             # Remove the leading './' from the file path
             clean_path=$(echo "$file_path" | sed 's|^\./||')
             
-            # Combine the base URL with the file path for easy access
-            echo "File: $clean_path"
+            # Combine the base URL with the clean file path
+            echo "Page: $clean_path"
             echo "Link: $BASE_URL/$clean_path"
             echo "-----------------------------------------------------------------"
           done
