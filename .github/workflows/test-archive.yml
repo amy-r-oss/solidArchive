@@ -49,9 +49,17 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Exact ArchiveBox Static Export Method
+      - name: Extract and Prepare for Static Hosting (Official Method)
         run: |
-          # The exact method prescribed by the documentation for static rendering
+          # Official ArchiveBox method for static export
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            extract
+
+      - name: Generate Static Index Files
+        run: |
+          # Generate HTML and JSON indexes for browsing
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
@@ -62,7 +70,7 @@ jobs:
             my-archivebox \
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
 
-      - name: Prepare Folder Structural Routing
+      - name: Prepare Folder Structure for GitHub Pages
         run: |
           # 1. Fresh start for the deployment root folder
           rm -rf "$GITHUB_WORKSPACE/public"
@@ -70,57 +78,64 @@ jobs:
           
           # 2. Copy the main static index files into the deployment root
           cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
-          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
+          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/" || true
           
-          # 3. Only copy your true snapshot data paths
-          # This catches the newer user layout: archive/archive/users/...
+          # 3. Copy archive data (modern multi-user layout)
+          # This catches: archive/users/...
           if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then
-            echo "Copying modern multi-user data structures..."
+            echo "✅ Copying modern multi-user archive structures..."
             cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
           fi
-
+          
+          # 4. Copy any extracted snapshot data
           # This catches classic numeric timestamp folders (like 1787390968.799274)
-          # while ignoring system/temp/binary folders completely
-          echo "Copying standalone timestamp snapshot folders..."
+          echo "✅ Copying extracted snapshot folders..."
           find "$GITHUB_WORKSPACE/archive" -maxdepth 1 -type d -name "[0-9]*" | while read -r folder; do
             if [ -n "$folder" ]; then
+              echo "  Copying: $(basename $folder)"
               cp -r "$folder" "$GITHUB_WORKSPACE/public/"
             fi
           done
 
+          # 5. List what we're deploying
+          echo ""
+          echo "📦 Files ready for GitHub Pages deployment:"
+          ls -lah "$GITHUB_WORKSPACE/public/"
 
-      - name: Calculate and View Real GitHub Pages URLs
+      - name: Calculate and Display GitHub Pages URLs
         run: |
           echo "============================================="
           echo "🌐 BASE WEB HOSTING ADDRESS"
           echo "============================================="
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          echo "Dashboard: $BASE_URL/index.html"
+          echo "📍 Dashboard: $BASE_URL/index.html"
           echo ""
           
           echo "============================================="
           echo "🔗 LIVE ARCHIVED SNAPSHOT LINK LOCATIONS"
           echo "============================================="
-          # Safer processing bypasses jq arrays by reading the output index keys directly
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            list --json | grep -oE '"path": "[^"]+"' | sed 's/"path": "//;s/"//' | while read -r snapshot_path; do
+          # Extract snapshot paths from JSON and build proper GitHub Pages URLs
+          if [ -f "$GITHUB_WORKSPACE/archive/index.json" ]; then
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE/archive:/data" \
+              my-archivebox \
+              list --json | grep -oE '"path": "[^"]+"' | sed 's/"path": "//;s/"//' | while read -r snapshot_path; do
               if [ -n "$snapshot_path" ]; then
-                echo "Snapshot View URL: $BASE_URL/$snapshot_path/index.html"
-                echo "Direct Video/Media Folder: $BASE_URL/$snapshot_path/"
+                echo "📄 Snapshot: $BASE_URL/$snapshot_path/index.html"
+                echo "📁 Media Folder: $BASE_URL/$snapshot_path/"
                 echo "---------------------------------------------"
               fi
             done
+          fi
 
-      - name: Upload Static Download Artifact
+      - name: Upload Static Archive Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: archive-static-download-folder
+          name: archive-static-export
           path: public/
           retention-days: 90
 
-      - name: Upload GitHub Pages Target Build
+      - name: Upload to GitHub Pages
         uses: actions/upload-pages-artifact@v3
         with:
           path: public/
