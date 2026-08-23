@@ -62,19 +62,32 @@ jobs:
             my-archivebox \
             list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
 
-      - name: Prepare Folder Structural Routing
+           - name: Prepare Folder Structural Routing
         run: |
-          # 1. Clear old targets and place index files in the root
+          # 1. Fresh start for the deployment root folder
+          rm -rf "$GITHUB_WORKSPACE/public"
+          mkdir -p "$GITHUB_WORKSPACE/public"
+          
+          # 2. Copy the main static index files into the deployment root
           cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
           cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # 2. Sync everything recursively using rsync.
-          # This captures all nested users directories AND random numeric timestamp folders.
-          rsync -av \
-            --exclude='*.sqlite3*' \
-            --exclude='logs/' \
-            --exclude='sources/' \
-            "$GITHUB_WORKSPACE/archive/" "$GITHUB_WORKSPACE/public/"
+          # 3. Only copy your true snapshot data paths
+          # This catches the newer user layout: archive/archive/users/...
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then
+            echo "Copying modern multi-user data structures..."
+            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
+          fi
+
+          # This catches classic numeric timestamp folders (like 1787390968.799274)
+          # while ignoring system/temp/binary folders completely
+          echo "Copying standalone timestamp snapshot folders..."
+          find "$GITHUB_WORKSPACE/archive" -maxdepth 1 -type d -name "[0-9]*" | while read -r folder; do
+            if [ -n "$folder" ]; then
+              cp -r "$folder" "$GITHUB_WORKSPACE/public/"
+            fi
+          done
+
 
       - name: Calculate and View Real GitHub Pages URLs
         run: |
