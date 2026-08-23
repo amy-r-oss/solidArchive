@@ -49,26 +49,26 @@ jobs:
             my-archivebox \
             add "${{ inputs.url }}"
 
-      - name: Export as Static HTML (Official Method for GitHub Pages)
+      - name: Generate Static Index (Official Method for GitHub Pages)
         run: |
-          # Official ArchiveBox method for static export to GitHub Pages
+          # Official ArchiveBox method for static HTML generation
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            export --html /data/static-export
+            generate-static-index
 
-      - name: Generate Index Files
+      - name: Generate List Indexes
         run: |
-          # Generate HTML and JSON indexes for browsing
+          # Generate HTML and JSON list views for browsing
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
+            list --html --with-headers > "$GITHUB_WORKSPACE/archive/list.html"
 
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
+            list --json --with-headers > "$GITHUB_WORKSPACE/archive/list.json"
 
       - name: Prepare Folder Structure for GitHub Pages
         run: |
@@ -76,42 +76,46 @@ jobs:
           rm -rf "$GITHUB_WORKSPACE/public"
           mkdir -p "$GITHUB_WORKSPACE/public"
           
-          # 2. Copy exported static HTML content
-          if [ -d "$GITHUB_WORKSPACE/archive/static-export" ]; then
-            echo "✅ Copying static HTML export..."
-            cp -r "$GITHUB_WORKSPACE/archive/static-export"/* "$GITHUB_WORKSPACE/public/"
+          # 2. Copy generated static index files
+          if [ -f "$GITHUB_WORKSPACE/archive/index.html" ]; then
+            echo "✅ Copying generated static index..."
+            cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
           fi
           
-          # 3. Copy the index files
-          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/index-archive.html" || true
-          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/index-archive.json" || true
+          # 3. Copy list views
+          cp "$GITHUB_WORKSPACE/archive/list.html" "$GITHUB_WORKSPACE/public/" || true
+          cp "$GITHUB_WORKSPACE/archive/list.json" "$GITHUB_WORKSPACE/public/" || true
           
-          # 4. Copy archive data (modern multi-user layout)
+          # 4. Copy archive data (snapshots and extracted content)
           if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then
             echo "✅ Copying archive snapshot data..."
             cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
           fi
 
-          # 5. List what we're deploying
+          # 5. Copy any web directory data
+          if [ -d "$GITHUB_WORKSPACE/archive/web" ]; then
+            echo "✅ Copying web snapshot data..."
+            cp -r "$GITHUB_WORKSPACE/archive/web" "$GITHUB_WORKSPACE/public/"
+          fi
+
+          # 6. List what we're deploying
           echo ""
           echo "📦 Files ready for GitHub Pages deployment:"
-          find "$GITHUB_WORKSPACE/public" -type f -name "index.html" | head -5
+          find "$GITHUB_WORKSPACE/public" -type f | head -10
           echo "..."
           echo "Total files: $(find $GITHUB_WORKSPACE/public -type f | wc -l)"
 
-      - name: Calculate and Display GitHub Pages URLs
+      - name: Display GitHub Pages URLs
         run: |
           echo "============================================="
-          echo "🌐 BASE WEB HOSTING ADDRESS"
+          echo "✅ ARCHIVE READY FOR GITHUB PAGES"
           echo "============================================="
           BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}"
-          echo "📍 Main Dashboard: $BASE_URL/index.html"
+          echo "📍 Your archive will be available at:"
+          echo "   $BASE_URL/index.html"
           echo ""
-          
-          echo "============================================="
-          echo "✅ DEPLOYMENT COMPLETE - Your archive is ready!"
-          echo "============================================="
-          echo "Access your archive at: $BASE_URL"
+          echo "📄 Browse all links:"
+          echo "   $BASE_URL/list.html"
 
       - name: Upload Static Archive Artifact
         uses: actions/upload-artifact@v4
