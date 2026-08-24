@@ -35,14 +35,28 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
           mkdir -p "$GITHUB_WORKSPACE/public"
+          
+      # 🍪 1. GENERATE COOKIES FILE IN RUNNER ENVIRONMENT
+      - name: Create temporary YouTube cookies
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
+          chmod 600 "$RUNNER_TEMP/cookies.txt"
+
       - name: Run ArchiveBox
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
+          # 🐳 2. PASS COOKIES TO DOCKER CONTAINER
+          # -v mounts the file into a temporary data path inside the docker sandbox
+          # -e tells ArchiveBox's yt-dlp config exactly where to look for those cookies
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
             my-archivebox \
             add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
