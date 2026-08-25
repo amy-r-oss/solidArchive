@@ -50,6 +50,10 @@ jobs:
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
+          docker run --rm \
+            -v $GITHUB_WORKSPACE/archive:/data \
+            my-archivebox \
+            --version
           # 🐳 2. PASS COOKIES TO DOCKER CONTAINER
           # -v mounts the file into a temporary data path inside the docker sandbox
           # -e tells ArchiveBox's yt-dlp config exactly where to look for those cookies
