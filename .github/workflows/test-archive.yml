@@ -77,7 +77,8 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
+             list --json --with-headers --url__icontains=users > "$GITHUB_WORKSPACE/archive/index.json"
+            # list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
       - name: Prepare Folder Structural Routing
         run: |
           # Clean old directories and map correct deployment paths
