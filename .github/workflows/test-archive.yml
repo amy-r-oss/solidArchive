@@ -61,10 +61,21 @@ jobs:
             add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
         run: |
+        - name: Check snapshot fs_version
+  run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            shell -c "from archivebox.core.models import Snapshot; print(Snapshot.objects.values_list('fs_version', flat=True).distinct())"
           docker run --rm \
             -v $GITHUB_WORKSPACE/archive:/data \
             my-archivebox \
             --version
+            - name: Migrate snapshots to current fs_version
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            update --reindex
           docker run --rm \
             -e PUBLIC_URL="https://amy-r-oss.github.io/solidArchive" \
             -v $GITHUB_WORKSPACE/archive:/data \
