@@ -61,8 +61,6 @@ jobs:
             add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
         run: |
-        - name: Check snapshot fs_version
-  run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
