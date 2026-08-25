@@ -61,11 +61,19 @@ jobs:
             add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
         run: |
-          # 1. Use the generic list command to output the root navigation files
+          # Set BASE_URL before exporting
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            config --set BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/archive"
+          
+          # Export to HTML
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
+          
+          # Export to JSON
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
