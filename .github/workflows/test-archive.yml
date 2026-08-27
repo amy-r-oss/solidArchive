@@ -61,17 +61,23 @@ jobs:
             add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
         run: |
+          docker run --rm my-archivebox version
+          
           # Set BASE_URL before exporting
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             config --set BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/archive"
           
-          # Export to HTML
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
+            list --html --with-headers > "$GITHUB_WORKSPACE/public/index.html"
+          
+          # Copy the ACTUAL ARCHIVED CONTENT (not the dashboard)
+          if [ -d "$GITHUB_WORKSPACE/archive/archive/users" ]; then
+            cp -r "$GITHUB_WORKSPACE/archive/archive/users"/* "$GITHUB_WORKSPACE/public/"
+          fi
           
           # Export to JSON
           docker run --rm \
