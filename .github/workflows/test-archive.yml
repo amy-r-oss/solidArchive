@@ -80,22 +80,28 @@ jobs:
 
       - name: Prepare Folder Structural Routing
         run: |
-          # 2. Clean/Create the public deployment directory
+          # 1. Clean and create the public deployment directory
           rm -rf "$GITHUB_WORKSPACE/public"
-          mkdir -p "$GITHUB_WORKSPACE/public"
+          mkdir -p "$GITHUB_WORKSPACE/public/archive"
           
-          # 3. Move the root indexes into public
+          # 2. Move the root indexes into public
           mv "$GITHUB_WORKSPACE/index.html" "$GITHUB_WORKSPACE/public/"
           mv "$GITHUB_WORKSPACE/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # 4. Copy the entire archive data directory structure cleanly 
-          # This accurately preserves the users/system/snapshots/... layout
-          if [ -d "$GITHUB_WORKSPACE/archive" ]; then 
-            cp -r "$GITHUB_WORKSPACE/archive" "$GITHUB_WORKSPACE/public/archive"
+          # 3. ONLY copy the actual snapshots, skipping deep logs, extensions, and crawls
+          # This drastically reduces the path depth and file sizes
+          if [ -d "$GITHUB_WORKSPACE/archive/users/system/snapshots" ]; then
+            cp -r "$GITHUB_WORKSPACE/archive/users/system/snapshots" "$GITHUB_WORKSPACE/public/archive/"
           fi
 
-          # 5. Disable Jekyll so GitHub Pages reads deep nested system folders
+          # 4. CRITICAL CLEANUP: Remove deeply nested browser extension folders/captchas
+          # that break GitHub's file systems, while keeping the web assets intact
+          find "$GITHUB_WORKSPACE/public/archive" -type d -name "responses" -exec rm -rf {} + 2>/dev/null || true
+          find "$GITHUB_WORKSPACE/public/archive" -type d -name "crawls" -exec rm -rf {} + 2>/dev/null || true
+
+          # 5. Disable Jekyll processing
           touch "$GITHUB_WORKSPACE/public/.nojekyll"
+
       - name: View All Folders and Archived URLs
         run: |
           echo "============================================="
