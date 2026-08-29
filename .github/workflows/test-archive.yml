@@ -67,17 +67,21 @@ jobs:
             my-archivebox \
             config --set BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/archive"
           
-          # Export to HTML
+          # Export to a fully static, relative-mapped HTML site structure
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
+            export --type=html > "$GITHUB_WORKSPACE/archive/index.html"
           
           # Export to JSON
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
+            export --type=json > "$GITHUB_WORKSPACE/archive/index.json"
+
+          # Force GitHub Pages to allow deeply nested files/folders
+          touch "$GITHUB_WORKSPACE/archive/.nojekyll"
+          
       - name: Prepare Folder Structural Routing
         run: |
           # Clean old directories and map correct deployment paths
