@@ -67,17 +67,17 @@ jobs:
             my-archivebox \
             config --set BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/archive"
           
-          # Export to a fully static, relative-mapped HTML site structure
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            export --type=html > "$GITHUB_WORKSPACE/archive/index.html"
-          
-          # Export to JSON
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            export --type=json > "$GITHUB_WORKSPACE/archive/index.json"
+           # 1. Output the files to the parent workspace directory ($GITHUB_WORKSPACE)
+            # NOT inside the archive/ folder itself!
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE/archive:/data" \
+              my-archivebox \
+              list --html --with-headers > "$GITHUB_WORKSPACE/index.html"
+            
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE/archive:/data" \
+              my-archivebox \
+              list --json --with-headers > "$GITHUB_WORKSPACE/index.json"
 
           # Force GitHub Pages to allow deeply nested files/folders
           touch "$GITHUB_WORKSPACE/archive/.nojekyll"
