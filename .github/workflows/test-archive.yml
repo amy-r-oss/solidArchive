@@ -67,40 +67,32 @@ jobs:
             my-archivebox \
             config --set BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/archive"
           
-          # 1. Generate the indexes into the workspace root so paths align correctly
+            # Export to HTML
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --html --with-headers > "$GITHUB_WORKSPACE/index.html"
+            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
           
+          # Export to JSON
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            list --json --with-headers > "$GITHUB_WORKSPACE/index.json"
+            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
 
       - name: Prepare Folder Structural Routing
         run: |
-          # 1. Clean and create the public deployment directory
-          rm -rf "$GITHUB_WORKSPACE/public"
-          mkdir -p "$GITHUB_WORKSPACE/public/archive"
+          # Clean old directories and map correct deployment paths
+          mkdir -p "$GITHUB_WORKSPACE/public"
           
-          # 2. Move the root indexes into public
-          mv "$GITHUB_WORKSPACE/index.html" "$GITHUB_WORKSPACE/public/"
-          mv "$GITHUB_WORKSPACE/index.json" "$GITHUB_WORKSPACE/public/"
+          # Move base indexes
+          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
+          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # 3. ONLY copy the actual snapshots, skipping deep logs, extensions, and crawls
-          # This drastically reduces the path depth and file sizes
-          if [ -d "$GITHUB_WORKSPACE/archive/users/system/snapshots" ]; then
-            cp -r "$GITHUB_WORKSPACE/archive/users/system/snapshots" "$GITHUB_WORKSPACE/public/archive/"
+          # Copy everything within the data storage archive directory cleanly 
+          # This catches both old timestamp styles and newer user multi-tenant storage layouts
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
+            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
           fi
-
-          # 4. CRITICAL CLEANUP: Remove deeply nested browser extension folders/captchas
-          # that break GitHub's file systems, while keeping the web assets intact
-          find "$GITHUB_WORKSPACE/public/archive" -type d -name "responses" -exec rm -rf {} + 2>/dev/null || true
-          find "$GITHUB_WORKSPACE/public/archive" -type d -name "crawls" -exec rm -rf {} + 2>/dev/null || true
-
-          # 5. Disable Jekyll processing
-          touch "$GITHUB_WORKSPACE/public/.nojekyll"
 
       - name: View All Folders and Archived URLs
         run: |
