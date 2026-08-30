@@ -191,34 +191,31 @@ jobs:
       - name: Verify OpenTimeStamp proof
         run: |
           ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
-          export ARCHIVE_FILE
           
           if [ -f "${ARCHIVE_FILE}.ots" ]; then
             echo "✅ OTS proof file exists"
             ls -lh "${ARCHIVE_FILE}.ots"
             
-            python << 'PYTHON_SCRIPT'
+            python -c "
             import subprocess
             import os
             
-            archive_file = os.environ.get('ARCHIVE_FILE')
-            
             try:
                 result = subprocess.run(
-                    ['ots', 'verify', f"{archive_file}.ots"],
+                    ['ots', 'verify', '${ARCHIVE_FILE}.ots'],
                     capture_output=True,
                     text=True,
                     timeout=30
                 )
-                print("Verification output:")
+                print('Verification output:')
                 print(result.stdout)
                 if result.stderr:
-                    print("Info/Errors:")
+                    print('Info/Errors:')
                     print(result.stderr)
             except Exception as e:
-                print(f"⚠️  Could not verify with CLI: {e}")
-                print("Note: This is expected if the timestamp hasn't been confirmed on the blockchain yet")
-            PYTHON_SCRIPT
+                print(f'⚠️  Could not verify with CLI: {e}')
+                print('Note: This is expected if the timestamp hasn\'t been confirmed on the blockchain yet')
+                        "
           else
             echo "⚠️  OTS proof file not found - will continue anyway"
           fi
