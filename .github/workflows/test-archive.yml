@@ -117,22 +117,208 @@ jobs:
             echo "Link: $BASE_URL/$clean_path"
             echo "-----------------------------------------------------------------"
           done
-        # echo "============================================="
-        # echo "🔗 ALL ARCHIVED URLS IN DATABASE"
-        # echo "============================================="
-        # # Replaced broken status argument with valid base command
-        # docker run --rm \
-        #   -v "$GITHUB_WORKSPACE/archive:/data" \
-        #   my-archivebox \
-        #   list
+
       - name: Show result
         run: |
           find public -maxdepth 4 -type f | sort
+
+      # 🔐 3. OPENIMESTAMP INTEGRATION
+      - name: Install OpenTimeStamp tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y opentimestamps-client
+          pip install otslib
+
+      - name: Create artifact archive for OpenTimeStamp
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          # Create a tarball of the entire public archive
+          tar -czf archive-${{ github.run_id }}-${{ github.run_number }}.tar.gz public/
+          ls -lh archive-*.tar.gz
+
+      - name: Timestamp artifact with OpenTimeStamp
+        run: |
+          # Find the archive file we just created
+          ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
+          echo "Timestamping: $ARCHIVE_FILE"
+          
+          # Create OTS proof
+          ots stamp "$ARCHIVE_FILE"
+          
+          # Verify the proof was created
+          if [ -f "${ARCHIVE_FILE}.ots" ]; then
+            echo "✅ OpenTimeStamp proof created successfully"
+            ls -lh "${ARCHIVE_FILE}.ots"
+          else
+            echo "❌ Failed to create OpenTimeStamp proof"
+            exit 1
+          fi
+
+      - name: Generate OpenTimeStamp verification report
+        run: |
+          ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
+          
+          mkdir -p "$GITHUB_WORKSPACE/ots-verification"
+          
+          # Verify the timestamp
+          ots verify "${ARCHIVE_FILE}.ots" > "$GITHUB_WORKSPACE/ots-verification/verification-report.txt" 2>&1 || true
+          
+          # Create a metadata file with archive info
+          cat > "$GITHUB_WORKSPACE/ots-verification/archive-metadata.json" << 'EOF'
+          {
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "commit": "${{ github.sha }}",
+            "branch": "${{ github.ref_name }}",
+            "url_archived": "${{ inputs.url }}",
+            "timestamp": "$(date -u -Iseconds)",
+            "archive_file": "$(basename $ARCHIVE_FILE)"
+          }
+          EOF
+          
+          cat "$GITHUB_WORKSPACE/ots-verification/archive-metadata.json"
+
+      - name: Setup Google Drive authentication
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+        run: |
+          mkdir -p "$HOME/.config/gdown"
+          echo "$GOOGLE_DRIVE_CREDENTIALS" > "$HOME/.config/gdown/credentials.json"
+          
+          # Install google-auth-oauthlib for authentication
+          pip install --quiet google-auth-oauthlib google-auth-httplib2 google-api-python-client
+
+      - name: Upload artifacts to Google Drive
+        env:
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        run: |
+          python << 'PYTHON_SCRIPT'
+          import os
+          import json
+          from google.auth.transport.requests import Request
+          from google.oauth2.service_account import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          import time
+          from pathlib import Path
+          
+          # Setup authentication
+          creds_path = os.path.expanduser("~/.config/gdown/credentials.json")
+          
+          # For service account
+          SCOPES = ['https://www.googleapis.com/auth/drive']
+          credentials = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+          
+          drive_service = build('drive', 'v3', credentials=credentials)
+          
+          folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+          if not folder_id:
+              print("❌ GOOGLE_DRIVE_FOLDER_ID secret not set")
+              exit(1)
+          
+          # Create a folder for this run
+          run_folder_name = f"archive-run-{os.getenv('GITHUB_RUN_ID')}-{os.getenv('GITHUB_RUN_NUMBER')}"
+          
+          folder_metadata = {
+              'name': run_folder_name,
+              'mimeType': 'application/vnd.google-apps.folder',
+              'parents': [folder_id]
+          }
+          
+          folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
+          run_folder_id = folder.get('id')
+          print(f"✅ Created Google Drive folder: {run_folder_id}")
+          
+          # Files to upload
+          files_to_upload = [
+              (os.path.join(os.getenv('GITHUB_WORKSPACE'), 'archive-*.tar.gz'), 'Archive Artifact'),
+              (os.path.join(os.getenv('GITHUB_WORKSPACE'), 'archive-*.tar.gz.ots'), 'OpenTimeStamp Proof'),
+          ]
+          
+          # Upload OTS verification report
+          ots_report_path = os.path.join(os.getenv('GITHUB_WORKSPACE'), 'ots-verification', 'verification-report.txt')
+          if os.path.exists(ots_report_path):
+              files_to_upload.append((ots_report_path, 'OTS Verification Report'))
+          
+          # Upload metadata
+          metadata_path = os.path.join(os.getenv('GITHUB_WORKSPACE'), 'ots-verification', 'archive-metadata.json')
+          if os.path.exists(metadata_path):
+              files_to_upload.append((metadata_path, 'Archive Metadata'))
+          
+          # Upload each file
+          for file_pattern, description in files_to_upload:
+              # Expand glob patterns
+              import glob
+              matching_files = glob.glob(file_pattern)
+              
+              for file_path in matching_files:
+                  if os.path.isfile(file_path):
+                      file_name = os.path.basename(file_path)
+                      file_size = os.path.getsize(file_path)
+                      
+                      print(f"\n📤 Uploading: {file_name} ({file_size / (1024*1024):.2f} MB)")
+                      
+                      file_metadata = {
+                          'name': file_name,
+                          'parents': [run_folder_id]
+                      }
+                      
+                      media = MediaFileUpload(file_path, resumable=True)
+                      
+                      request = drive_service.files().create(
+                          body=file_metadata,
+                          media_body=media,
+                          fields='id, webViewLink',
+                          supportsAllDrives=True
+                      )
+                      
+                      response = None
+                      while response is None:
+                          try:
+                              status, response = request.next_chunk()
+                              if status:
+                                  print(f"  Progress: {int(status.progress() * 100)}%")
+                          except Exception as e:
+                              print(f"  Retrying due to: {e}")
+                              time.sleep(5)
+                      
+                      file_id = response.get('id')
+                      file_url = response.get('webViewLink')
+                      print(f"  ✅ Uploaded: {file_url}")
+          
+          print(f"\n✅ All artifacts uploaded to: https://drive.google.com/drive/folders/{run_folder_id}")
+          
+          # Save folder ID for reference
+          with open(os.path.join(os.getenv('GITHUB_WORKSPACE'), 'drive-folder-id.txt'), 'w') as f:
+              f.write(f"{run_folder_id}\n")
+              f.write(f"https://drive.google.com/drive/folders/{run_folder_id}\n")
+          
+          PYTHON_SCRIPT
+
+      - name: Display Google Drive upload summary
+        if: always()
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/drive-folder-id.txt" ]; then
+            echo "✅ Google Drive Upload Summary"
+            echo "======================================"
+            cat "$GITHUB_WORKSPACE/drive-folder-id.txt"
+          fi
+
       - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
         with:
           name: archive-static-download-folder
           path: public/
+          retention-days: 90
+
+      - name: Upload OpenTimeStamp files as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-ots-proof
+          path: |
+            archive-*.tar.gz
+            archive-*.tar.gz.ots
+            ots-verification/
           retention-days: 90
 
       - name: Upload GitHub Pages Target Build
