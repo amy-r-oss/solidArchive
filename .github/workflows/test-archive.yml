@@ -31,11 +31,12 @@ jobs:
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
+
       - name: Create archive directories
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
           mkdir -p "$GITHUB_WORKSPACE/public"
-          
+
       # 🍪 1. GENERATE COOKIES FILE IN RUNNER ENVIRONMENT
       - name: Create temporary YouTube cookies
         env:
@@ -124,6 +125,10 @@ jobs:
           tar -czf archive-${{ github.run_id }}-${{ github.run_number }}.tar.gz public/
           echo "Archive created:"
           ls -lh archive-*.tar.gz
+          
+          # Export for next steps
+          ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
+          echo "ARCHIVE_FILE=$ARCHIVE_FILE" >> $GITHUB_ENV
 
       - name: Timestamp artifact with OpenTimeStamp
         run: |
@@ -191,31 +196,34 @@ jobs:
       - name: Verify OpenTimeStamp proof
         run: |
           ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
+          export ARCHIVE_FILE
           
           if [ -f "${ARCHIVE_FILE}.ots" ]; then
             echo "✅ OTS proof file exists"
             ls -lh "${ARCHIVE_FILE}.ots"
             
-            python -c "
+            python << 'PYTHON_SCRIPT'
             import subprocess
             import os
             
+            archive_file = os.environ.get('ARCHIVE_FILE')
+            
             try:
                 result = subprocess.run(
-                    ['ots', 'verify', '${ARCHIVE_FILE}.ots'],
+                    ['ots', 'verify', f"{archive_file}.ots"],
                     capture_output=True,
                     text=True,
                     timeout=30
                 )
-                print('Verification output:')
+                print("Verification output:")
                 print(result.stdout)
                 if result.stderr:
-                    print('Info/Errors:')
+                    print("Info/Errors:")
                     print(result.stderr)
             except Exception as e:
-                print(f'⚠️  Could not verify with CLI: {e}')
-                print('Note: This is expected if the timestamp hasn\'t been confirmed on the blockchain yet')
-                        "
+                print(f"⚠️  Could not verify with CLI: {e}")
+                print("Note: This is expected if the timestamp hasn't been confirmed on the blockchain yet")
+            PYTHON_SCRIPT
           else
             echo "⚠️  OTS proof file not found - will continue anyway"
           fi
@@ -241,6 +249,17 @@ jobs:
           
           cat "$GITHUB_WORKSPACE/ots-verification/archive-metadata.json"
 
+      - name: Debug - List all files in workspace
+        run: |
+          echo "=== GITHUB_WORKSPACE Contents ==="
+          ls -lh "$GITHUB_WORKSPACE"
+          echo ""
+          echo "=== Files matching archive-*.tar.gz* ==="
+          find "$GITHUB_WORKSPACE" -maxdepth 1 -name "archive-*.tar.gz*" -ls
+          echo ""
+          echo "=== OTS Verification folder ==="
+          ls -lh "$GITHUB_WORKSPACE/ots-verification" 2>/dev/null || echo "Folder not found"
+
       - name: Setup Google Drive authentication
         env:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
@@ -252,6 +271,7 @@ jobs:
       - name: Upload artifacts to Google Drive
         env:
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
         run: |
           python << 'PYTHON_SCRIPT'
           import os
@@ -261,71 +281,79 @@ jobs:
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
           
+          # Setup auth
           creds_path = os.path.expanduser("~/.config/gdown/credentials.json")
-          SCOPES = ['https://www.googleapis.com/auth/drive']
           
-          try:
-              credentials = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-              drive_service = build('drive', 'v3', credentials=credentials)
-          except Exception as e:
-              print(f"❌ Failed to authenticate: {e}")
-              exit(1)
+          # Recreate credentials file from secret
+          creds_json = os.getenv('GOOGLE_DRIVE_CREDENTIALS')
+          with open(creds_path, 'w') as f:
+              f.write(creds_json)
+          
+          SCOPES = ['https://www.googleapis.com/auth/drive']
+          credentials = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
+          drive_service = build('drive', 'v3', credentials=credentials)
           
           folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
-          if not folder_id:
-              print("❌ GOOGLE_DRIVE_FOLDER_ID secret not set")
-              exit(1)
-          
-          run_folder_name = f"archive-run-{os.getenv('GITHUB_RUN_ID')}-{os.getenv('GITHUB_RUN_NUMBER')}"
-          
-          folder_metadata = {
-              'name': run_folder_name,
-              'mimeType': 'application/vnd.google-apps.folder',
-              'parents': [folder_id]
-          }
-          
-          try:
-              folder = drive_service.files().create(body=folder_metadata, fields='id').execute()
-              run_folder_id = folder.get('id')
-              print(f"✅ Created Google Drive folder: {run_folder_id}")
-          except Exception as e:
-              print(f"❌ Failed to create folder: {e}")
-              exit(1)
-          
           workspace = os.getenv('GITHUB_WORKSPACE')
+          
+          print(f"📁 Target folder: {folder_id}")
+          print(f"📂 Workspace: {workspace}")
+          
+          # Find files to upload
           files_to_upload = []
           
-          # Only archive files and OTS proofs - NOT the entire public/ folder
+          # Look for archive tar.gz files
+          print("\n🔍 Searching for archive files...")
           archive_files = glob.glob(os.path.join(workspace, 'archive-*.tar.gz'))
+          print(f"Found {len(archive_files)} .tar.gz files")
           for f in archive_files:
+              print(f"  - {os.path.basename(f)} ({os.path.getsize(f) / (1024*1024):.2f} MB)")
               files_to_upload.append((f, 'Archive Artifact (.tar.gz)'))
           
+          # Look for OTS proof files
+          print("\n🔍 Searching for .ots proof files...")
           ots_files = glob.glob(os.path.join(workspace, 'archive-*.tar.gz.ots'))
+          print(f"Found {len(ots_files)} .ots files")
           for f in ots_files:
+              print(f"  - {os.path.basename(f)} ({os.path.getsize(f)} bytes)")
               files_to_upload.append((f, 'OpenTimeStamp Proof (.ots)'))
           
+          # Look for metadata
+          print("\n🔍 Searching for metadata...")
           metadata_path = os.path.join(workspace, 'ots-verification', 'archive-metadata.json')
           if os.path.exists(metadata_path):
+              size = os.path.getsize(metadata_path)
+              print(f"Found metadata: {size} bytes")
               files_to_upload.append((metadata_path, 'Archive Metadata'))
+          else:
+              print(f"Metadata not found at: {metadata_path}")
           
           if not files_to_upload:
-              print("❌ No files found to upload")
+              print("\n❌ NO FILES FOUND TO UPLOAD!")
+              print(f"Checked in: {workspace}")
               exit(1)
           
+          print(f"\n📤 Total files to upload: {len(files_to_upload)}")
+          
+          # Upload each file
           uploaded_count = 0
           for file_path, description in files_to_upload:
-              if os.path.isfile(file_path):
-                  file_name = os.path.basename(file_path)
-                  file_size = os.path.getsize(file_path)
-                  
-                  print(f"\n📤 Uploading: {file_name} ({file_size / (1024*1024):.2f} MB)")
-                  
-                  file_metadata = {
-                      'name': file_name,
-                      'parents': [run_folder_id],
-                      'description': description
-                  }
-                  
+              if not os.path.isfile(file_path):
+                  print(f"  ❌ File not found: {file_path}")
+                  continue
+              
+              file_name = os.path.basename(file_path)
+              file_size = os.path.getsize(file_path)
+              
+              print(f"\n📤 Uploading: {file_name} ({file_size / (1024*1024):.2f} MB)")
+              
+              file_metadata = {
+                  'name': file_name,
+                  'parents': [folder_id],
+                  'description': description
+              }
+              
+              try:
                   media = MediaFileUpload(file_path, resumable=True)
                   request = drive_service.files().create(
                       body=file_metadata,
@@ -343,20 +371,30 @@ jobs:
                               print(f"  Progress: {int(status.progress() * 100)}%")
                       except Exception as e:
                           retry_count += 1
-                          print(f"  Retry {retry_count}/3")
+                          print(f"  Retry {retry_count}/3: {str(e)[:100]}")
                           time.sleep(5)
                   
                   if response:
                       file_url = response.get('webViewLink')
                       print(f"  ✅ Uploaded: {file_url}")
                       uploaded_count += 1
+                  else:
+                      print(f"  ❌ Failed to upload after 3 retries")
+                      
+              except Exception as e:
+                  print(f"  ❌ Upload error: {e}")
           
-          if uploaded_count > 0:
-              drive_url = f"https://drive.google.com/drive/folders/{run_folder_id}"
-              print(f"\n✅ Successfully uploaded {uploaded_count} file(s)")
-              print(f"📁 Google Drive folder: {drive_url}")
+          print(f"\n{'='*50}")
+          print(f"✅ Successfully uploaded {uploaded_count}/{len(files_to_upload)} files")
+          print(f"📁 Folder: https://drive.google.com/drive/folders/{folder_id}")
           
           PYTHON_SCRIPT
+
+      - name: Display Google Drive upload summary
+        if: always()
+        run: |
+          echo "✅ Upload workflow completed"
+          echo "Check the workflow logs above for details"
 
       - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
