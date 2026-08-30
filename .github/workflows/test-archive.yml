@@ -131,8 +131,8 @@ jobs:
       - name: Install OpenTimeStamp and dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install from PyPI - this is the correct method
-          pip install otslib requests
+          # Install opentimestamps library from PyPI - CORRECT PACKAGE NAME
+          pip install opentimestamps requests
 
       - name: Create artifact archive for OpenTimeStamp
         run: |
@@ -147,67 +147,85 @@ jobs:
           # Find the archive file we just created
           ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
           echo "Timestamping: $ARCHIVE_FILE"
+          export ARCHIVE_FILE
           
           # Create OTS proof using Python
           python << 'PYTHON_SCRIPT'
           import subprocess
           import os
+          import hashlib
+          import requests
           
           archive_file = os.environ.get('ARCHIVE_FILE')
           
-          # Use ots command line tool via Python subprocess
-          result = subprocess.run(
-              ['python', '-m', 'otslib', 'stamp', archive_file],
-              capture_output=True,
-              text=True
-          )
+          print(f"Archive file: {archive_file}")
           
-          if result.returncode == 0:
-              print(f"✅ OpenTimeStamp proof created successfully")
-              if os.path.exists(f"{archive_file}.ots"):
+          # First, try using the ots CLI directly
+          try:
+              result = subprocess.run(
+                  ['ots', 'stamp', archive_file],
+                  capture_output=True,
+                  text=True,
+                  timeout=60
+              )
+              
+              if result.returncode == 0 and os.path.exists(f"{archive_file}.ots"):
+                  print(f"✅ OpenTimeStamp proof created via CLI")
                   size = os.path.getsize(f"{archive_file}.ots")
                   print(f"Proof file size: {size} bytes")
-          else:
-              print(f"⚠️  Alternative method: Using web API")
-              # Fallback to web-based timestamping
-              import requests
-              import hashlib
+                  exit(0)
+              else:
+                  print(f"⚠️  CLI method failed, trying web API...")
+                  print(f"Error: {result.stderr}")
+          except FileNotFoundError:
+              print("⚠️  'ots' command not found, trying web API...")
+          except Exception as e:
+              print(f"⚠️  CLI method error: {e}")
+          
+          # Fallback to web-based timestamping using OpenTimeStamps calendar
+          print("Using OpenTimeStamps Web Calendar API...")
+          
+          # Read file and compute hash
+          with open(archive_file, 'rb') as f:
+              file_data = f.read()
+              file_hash = hashlib.sha256(file_data).digest()
+          
+          print(f"File SHA256: {file_hash.hex()}")
+          
+          try:
+              # Submit to OpenTimeStamps calendar
+              response = requests.post(
+                  'https://alice.btc.calendar.opentimestamps.org',
+                  data=file_hash,
+                  timeout=30
+              )
               
-              # Read file and compute hash
-              with open(archive_file, 'rb') as f:
-                  file_hash = hashlib.sha256(f.read()).hexdigest()
-              
-              # Send to OpenTimeStamps calendar
-              print(f"File SHA256: {file_hash}")
-              
-              try:
-                  response = requests.post(
-                      'https://alice.btc.calendar.opentimestamps.org',
-                      data=bytes.fromhex(file_hash),
-                      timeout=30
-                  )
-                  
-                  if response.status_code == 200:
-                      with open(f"{archive_file}.ots", 'wb') as ots_file:
-                          ots_file.write(response.content)
-                      print("✅ OpenTimeStamp proof created via web API")
-                  else:
-                      print(f"⚠️  Web API returned: {response.status_code}")
-              except Exception as e:
-                  print(f"⚠️  Could not create web-based proof: {e}")
+              if response.status_code == 200:
+                  with open(f"{archive_file}.ots", 'wb') as ots_file:
+                      ots_file.write(response.content)
+                  print("✅ OpenTimeStamp proof created via web API")
+                  size = os.path.getsize(f"{archive_file}.ots")
+                  print(f"Proof file size: {size} bytes")
+              else:
+                  print(f"⚠️  Web API returned: {response.status_code}")
+                  print(f"Response: {response.text[:200]}")
+          except requests.exceptions.Timeout:
+              print("❌ Web API request timed out")
+          except Exception as e:
+              print(f"❌ Web API error: {e}")
+          
           PYTHON_SCRIPT
-        env:
-          ARCHIVE_FILE: ${{ env.ARCHIVE_FILE }}
 
       - name: Verify OpenTimeStamp proof
         run: |
           ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
+          export ARCHIVE_FILE
           
           if [ -f "${ARCHIVE_FILE}.ots" ]; then
             echo "✅ OTS proof file exists"
             ls -lh "${ARCHIVE_FILE}.ots"
             
-            # Try to verify
+            # Try to verify with ots CLI
             python << 'PYTHON_SCRIPT'
             import subprocess
             import os
@@ -216,7 +234,7 @@ jobs:
             
             try:
                 result = subprocess.run(
-                    ['python', '-m', 'otslib', 'verify', f"{archive_file}.ots"],
+                    ['ots', 'verify', f"{archive_file}.ots"],
                     capture_output=True,
                     text=True,
                     timeout=30
@@ -224,16 +242,15 @@ jobs:
                 print("Verification output:")
                 print(result.stdout)
                 if result.stderr:
-                    print("Errors:")
+                    print("Info/Errors:")
                     print(result.stderr)
             except Exception as e:
-                print(f"Could not verify: {e}")
+                print(f"⚠️  Could not verify with CLI: {e}")
+                print("Note: This is expected if the timestamp hasn't been confirmed on the blockchain yet")
             PYTHON_SCRIPT
           else
             echo "⚠️  OTS proof file not found - will continue anyway"
           fi
-        env:
-          ARCHIVE_FILE: ${{ env.ARCHIVE_FILE }}
 
       - name: Generate OpenTimeStamp verification report
         run: |
@@ -251,7 +268,8 @@ jobs:
             "url_archived": "${{ inputs.url }}",
             "timestamp": "$(date -u -Iseconds)",
             "archive_file": "$(basename $ARCHIVE_FILE)",
-            "ots_proof_created": $([ -f "${ARCHIVE_FILE}.ots" ] && echo "true" || echo "false")
+            "ots_proof_created": $([ -f "${ARCHIVE_FILE}.ots" ] && echo "true" || echo "false"),
+            "opentimestamps_info": "Proof can be verified at https://opentimestamps.org/ or via CLI with: ots verify archive-*.tar.gz.ots"
           }
           EOF
           
