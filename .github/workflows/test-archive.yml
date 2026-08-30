@@ -50,30 +50,25 @@ jobs:
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
-          # 🐳 2. PASS COOKIES TO DOCKER CONTAINER
-          # -v mounts the file into a temporary data path inside the docker sandbox
-          # -e tells ArchiveBox's yt-dlp config exactly where to look for those cookies
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
             -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
             my-archivebox \
             add "${{ inputs.url }}"
+
       - name: Exact ArchiveBox Static Export Method
         run: |
-          # Set BASE_URL before exporting
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             config --set BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/archive"
           
-            # Export to HTML
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
           
-          # Export to JSON
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
@@ -81,15 +76,10 @@ jobs:
 
       - name: Prepare Folder Structural Routing
         run: |
-          # Clean old directories and map correct deployment paths
           mkdir -p "$GITHUB_WORKSPACE/public"
-          
-          # Move base indexes
           cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
           cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
           
-          # Copy everything within the data storage archive directory cleanly 
-          # This catches both old timestamp styles and newer user multi-tenant storage layouts
           if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
             cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
           fi
@@ -99,7 +89,6 @@ jobs:
           echo "============================================="
           echo "📂 DEPLOYMENT DIRECTORY STRUCTURE"
           echo "============================================="
-          # Lists folders up to 6 levels down to expose deep snapshot assets
           find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
           echo ""
           echo "================================================================="
@@ -107,12 +96,8 @@ jobs:
           echo "================================================================="
           cd "$GITHUB_WORKSPACE/public"
           
-          # Find only files that end with the .html extension
           find . -type f -name "*.html" | sort | while read -r file_path; do
-            # Remove the leading './' from the file path
             clean_path=$(echo "$file_path" | sed 's|^\./||')
-            
-            # Combine the base URL with the clean file path
             echo "Page: $clean_path"
             echo "Link: $BASE_URL/$clean_path"
             echo "-----------------------------------------------------------------"
@@ -131,25 +116,21 @@ jobs:
       - name: Install OpenTimeStamp and dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install opentimestamps library from PyPI - CORRECT PACKAGE NAME
           pip install opentimestamps requests
 
       - name: Create artifact archive for OpenTimeStamp
         run: |
           cd "$GITHUB_WORKSPACE"
-          # Create a tarball of the entire public archive
           tar -czf archive-${{ github.run_id }}-${{ github.run_number }}.tar.gz public/
           echo "Archive created:"
           ls -lh archive-*.tar.gz
 
       - name: Timestamp artifact with OpenTimeStamp
         run: |
-          # Find the archive file we just created
           ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
           echo "Timestamping: $ARCHIVE_FILE"
           export ARCHIVE_FILE
           
-          # Create OTS proof using Python
           python << 'PYTHON_SCRIPT'
           import subprocess
           import os
@@ -157,10 +138,8 @@ jobs:
           import requests
           
           archive_file = os.environ.get('ARCHIVE_FILE')
-          
           print(f"Archive file: {archive_file}")
           
-          # First, try using the ots CLI directly
           try:
               result = subprocess.run(
                   ['ots', 'stamp', archive_file],
@@ -176,16 +155,13 @@ jobs:
                   exit(0)
               else:
                   print(f"⚠️  CLI method failed, trying web API...")
-                  print(f"Error: {result.stderr}")
           except FileNotFoundError:
               print("⚠️  'ots' command not found, trying web API...")
           except Exception as e:
               print(f"⚠️  CLI method error: {e}")
           
-          # Fallback to web-based timestamping using OpenTimeStamps calendar
           print("Using OpenTimeStamps Web Calendar API...")
           
-          # Read file and compute hash
           with open(archive_file, 'rb') as f:
               file_data = f.read()
               file_hash = hashlib.sha256(file_data).digest()
@@ -193,7 +169,6 @@ jobs:
           print(f"File SHA256: {file_hash.hex()}")
           
           try:
-              # Submit to OpenTimeStamps calendar
               response = requests.post(
                   'https://alice.btc.calendar.opentimestamps.org',
                   data=file_hash,
@@ -208,9 +183,6 @@ jobs:
                   print(f"Proof file size: {size} bytes")
               else:
                   print(f"⚠️  Web API returned: {response.status_code}")
-                  print(f"Response: {response.text[:200]}")
-          except requests.exceptions.Timeout:
-              print("❌ Web API request timed out")
           except Exception as e:
               print(f"❌ Web API error: {e}")
           
@@ -225,7 +197,6 @@ jobs:
             echo "✅ OTS proof file exists"
             ls -lh "${ARCHIVE_FILE}.ots"
             
-            # Try to verify with ots CLI
             python << 'PYTHON_SCRIPT'
             import subprocess
             import os
@@ -258,7 +229,6 @@ jobs:
           
           mkdir -p "$GITHUB_WORKSPACE/ots-verification"
           
-          # Create a metadata file with archive info
           cat > "$GITHUB_WORKSPACE/ots-verification/archive-metadata.json" << EOF
           {
             "run_id": "${{ github.run_id }}",
@@ -268,8 +238,7 @@ jobs:
             "url_archived": "${{ inputs.url }}",
             "timestamp": "$(date -u -Iseconds)",
             "archive_file": "$(basename $ARCHIVE_FILE)",
-            "ots_proof_created": $([ -f "${ARCHIVE_FILE}.ots" ] && echo "true" || echo "false"),
-            "opentimestamps_info": "Proof can be verified at https://opentimestamps.org/ or via CLI with: ots verify archive-*.tar.gz.ots"
+            "ots_proof_created": $([ -f "${ARCHIVE_FILE}.ots" ] && echo "true" || echo "false")
           }
           EOF
           
@@ -281,8 +250,6 @@ jobs:
         run: |
           mkdir -p "$HOME/.config/gdown"
           echo "$GOOGLE_DRIVE_CREDENTIALS" > "$HOME/.config/gdown/credentials.json"
-          
-          # Install google-auth and drive API
           pip install --quiet google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
       - name: Upload artifacts to Google Drive
@@ -291,30 +258,20 @@ jobs:
         run: |
           python << 'PYTHON_SCRIPT'
           import os
-          import json
           import glob
           import time
-          from pathlib import Path
-          from google.auth.transport.requests import Request
           from google.oauth2.service_account import Credentials
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
           
-          # Setup authentication
           creds_path = os.path.expanduser("~/.config/gdown/credentials.json")
-          
-          # For service account
           SCOPES = ['https://www.googleapis.com/auth/drive']
+          
           try:
               credentials = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-          except Exception as e:
-              print(f"❌ Failed to load credentials: {e}")
-              exit(1)
-          
-          try:
               drive_service = build('drive', 'v3', credentials=credentials)
           except Exception as e:
-              print(f"❌ Failed to build Drive service: {e}")
+              print(f"❌ Failed to authenticate: {e}")
               exit(1)
           
           folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
@@ -322,7 +279,6 @@ jobs:
               print("❌ GOOGLE_DRIVE_FOLDER_ID secret not set")
               exit(1)
           
-          # Create a folder for this run
           run_folder_name = f"archive-run-{os.getenv('GITHUB_RUN_ID')}-{os.getenv('GITHUB_RUN_NUMBER')}"
           
           folder_metadata = {
@@ -340,21 +296,17 @@ jobs:
               exit(1)
           
           workspace = os.getenv('GITHUB_WORKSPACE')
-          
-          # Files to upload
           files_to_upload = []
           
-          # Add archive tar.gz
+          # Only archive files and OTS proofs - NOT the entire public/ folder
           archive_files = glob.glob(os.path.join(workspace, 'archive-*.tar.gz'))
           for f in archive_files:
               files_to_upload.append((f, 'Archive Artifact (.tar.gz)'))
           
-          # Add OTS proof if it exists
           ots_files = glob.glob(os.path.join(workspace, 'archive-*.tar.gz.ots'))
           for f in ots_files:
               files_to_upload.append((f, 'OpenTimeStamp Proof (.ots)'))
           
-          # Add metadata
           metadata_path = os.path.join(workspace, 'ots-verification', 'archive-metadata.json')
           if os.path.exists(metadata_path):
               files_to_upload.append((metadata_path, 'Archive Metadata'))
@@ -363,7 +315,6 @@ jobs:
               print("❌ No files found to upload")
               exit(1)
           
-          # Upload each file
           uploaded_count = 0
           for file_path, description in files_to_upload:
               if os.path.isfile(file_path):
@@ -379,7 +330,6 @@ jobs:
                   }
                   
                   media = MediaFileUpload(file_path, resumable=True)
-                  
                   request = drive_service.files().create(
                       body=file_metadata,
                       media_body=media,
@@ -396,40 +346,20 @@ jobs:
                               print(f"  Progress: {int(status.progress() * 100)}%")
                       except Exception as e:
                           retry_count += 1
-                          print(f"  Retry {retry_count}/3 due to: {e}")
+                          print(f"  Retry {retry_count}/3")
                           time.sleep(5)
                   
                   if response:
-                      file_id = response.get('id')
                       file_url = response.get('webViewLink')
                       print(f"  ✅ Uploaded: {file_url}")
                       uploaded_count += 1
-                  else:
-                      print(f"  ❌ Failed to upload after retries")
           
           if uploaded_count > 0:
               drive_url = f"https://drive.google.com/drive/folders/{run_folder_id}"
               print(f"\n✅ Successfully uploaded {uploaded_count} file(s)")
               print(f"📁 Google Drive folder: {drive_url}")
-              
-              # Save folder ID for reference
-              with open(os.path.join(workspace, 'drive-folder-id.txt'), 'w') as f:
-                  f.write(f"{run_folder_id}\n")
-                  f.write(f"{drive_url}\n")
-          else:
-              print(f"❌ Failed to upload any files")
-              exit(1)
           
           PYTHON_SCRIPT
-
-      - name: Display Google Drive upload summary
-        if: always()
-        run: |
-          if [ -f "$GITHUB_WORKSPACE/drive-folder-id.txt" ]; then
-            echo "✅ Google Drive Upload Summary"
-            echo "======================================"
-            cat "$GITHUB_WORKSPACE/drive-folder-id.txt"
-          fi
 
       - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
