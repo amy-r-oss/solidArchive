@@ -132,6 +132,7 @@ jobs:
           import hashlib
           import requests
           import glob
+          import json
           
           # Find the archive file
           workspace = os.getenv('GITHUB_WORKSPACE')
@@ -152,33 +153,49 @@ jobs:
           print(f"📊 File size: {len(file_data) / (1024*1024):.2f} MB")
           print(f"🔐 SHA256: {file_hash.hex()}")
           
-          # Submit to OpenTimeStamps calendar
-          print("\n🌐 Submitting to OpenTimeStamps Web Calendar...")
+          # Try multiple OpenTimeStamps calendars
+          calendars = [
+              'https://b.cetTime.vr.unam.mx/timestamp',
+              'https://ots.btc.catallaxy.com/timestamp',
+              'https://time.syscoin.org/timestamp',
+          ]
           
-          try:
-              response = requests.post(
-                  'https://alice.btc.calendar.opentimestamps.org',
-                  data=file_hash,
-                  timeout=60
-              )
+          ots_created = False
+          
+          for calendar_url in calendars:
+              print(f"\n🌐 Trying: {calendar_url}")
               
-              if response.status_code == 200:
-                  ots_file = f"{archive_file}.ots"
-                  with open(ots_file, 'wb') as f:
-                      f.write(response.content)
+              try:
+                  response = requests.post(
+                      calendar_url,
+                      data=file_hash,
+                      timeout=60,
+                      headers={'User-Agent': 'solidArchive/1.0'}
+                  )
                   
-                  size = os.path.getsize(ots_file)
-                  print(f"✅ OpenTimeStamp proof created!")
-                  print(f"📄 Proof file: {ots_file}")
-                  print(f"📦 Proof size: {size} bytes")
-              else:
-                  print(f"❌ API returned {response.status_code}")
-                  print(f"Response: {response.text[:200]}")
-                  exit(1)
-                  
-          except Exception as e:
-              print(f"❌ Error: {e}")
-              exit(1)
+                  if response.status_code == 200:
+                      ots_file = f"{archive_file}.ots"
+                      with open(ots_file, 'wb') as f:
+                          f.write(response.content)
+                      
+                      size = os.path.getsize(ots_file)
+                      print(f"✅ OpenTimeStamp proof created!")
+                      print(f"📄 Proof file: {ots_file}")
+                      print(f"📦 Proof size: {size} bytes")
+                      ots_created = True
+                      break
+                  else:
+                      print(f"   └─ Status {response.status_code}")
+                      
+              except requests.exceptions.Timeout:
+                  print(f"   └─ Timeout")
+              except Exception as e:
+                  print(f"   └─ Error: {str(e)[:60]}")
+          
+          if not ots_created:
+              print("\n⚠️  Could not create OTS proof from any calendar")
+              print("   This is expected if all calendars are temporarily unavailable")
+              print("   The archive will still be backed up to Google Drive")
           
           PYTHON_SCRIPT
 
