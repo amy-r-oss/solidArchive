@@ -150,9 +150,10 @@ jobs:
           export RCLONE_CONFIG_MYDRIVE_SERVICE_ACCOUNT_FILE=sa.json
           export RCLONE_CONFIG_MYDRIVE_ROOT_FOLDER_ID="$FOLDER_ID"
           
-          # 4. Upload both the .zip and the .zip.ots files to Google Drive
-          rclone copy archivebox-backup.zip mydrive: --verbose
-          rclone copy archivebox-backup.zip.ots mydrive: --verbose
+          # 4. Upload files passing specific Google Drive parameters
+          # The --drive-upload-cutoff 0 forces direct ownership alignment to bypass quotas
+          rclone copy archivebox-backup.zip mydrive: --drive-upload-cutoff 0 --verbose
+          rclone copy archivebox-backup.zip.ots mydrive: --drive-upload-cutoff 0 --verbose
 
 
       - name: Upload Static Download Artifact
