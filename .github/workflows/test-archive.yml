@@ -129,7 +129,7 @@ jobs:
           ots stamp public/**/*
       
       - name: Upload to Google Drive
-        uses: adityak74/google-drive-upload-git-action@v1
+        uses: adityak74/google-drive-upload-git-action@main
         with:
           credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
           folderId: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
