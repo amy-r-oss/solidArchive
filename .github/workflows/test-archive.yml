@@ -53,7 +53,9 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
+            -e YTDLP_ENABLED=true \
+            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
             my-archivebox \
             add "${{ inputs.url }}"
 
@@ -106,7 +108,12 @@ jobs:
       - name: Show result
         run: |
           find public -maxdepth 4 -type f | sort
-
+          
+      - name: Remove temporary cookies
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cookies.txt"
+          
       - name: Generate Unforgeable Metadata File
         id: metadata
         run: |
