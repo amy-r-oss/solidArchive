@@ -125,7 +125,7 @@ jobs:
         run: |
           # This stamps only the single zip archive, creating archivebox-backup.zip.ots
           ots stamp archivebox-backup.zip
-      
+          
       - name: Upload to Google Drive using rclone
         env:
           GDRIVE_JSON: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
@@ -144,12 +144,23 @@ jobs:
           export RCLONE_CONFIG_MYDRIVE_ROOT_FOLDER_ID="$FOLDER_ID"
           
           # 4. Upload files passing specific Google Drive parameters
-          # Added --drive-acknowledge-abuse to bypass personal drive file scanning blocks
-          rclone copy archivebox-backup.zip mydrive: --drive-upload-cutoff 0 --drive-acknowledge-abuse --verbose
-          rclone copy archivebox-backup.zip.ots mydrive: --drive-upload-cutoff 0 --drive-acknowledge-abuse --verbose
+          # --drive-upload-cutoff 0 forces instant destination quota consumption
+          # --drive-acknowledge-abuse bypasses security flag blocks on .zip files
+          rclone copy archivebox-backup.zip mydrive: \
+            --drive-upload-cutoff 0 \
+            --drive-acknowledge-abuse \
+            --drive-use-trash=false \
+            --verbose
+            
+          rclone copy archivebox-backup.zip.ots mydrive: \
+            --drive-upload-cutoff 0 \
+            --drive-acknowledge-abuse \
+            --drive-use-trash=false \
+            --verbose
 
           # 5. Clean up the credential file
           rm -f sa.json
+
 
 
       - name: Upload Static Download Artifact
