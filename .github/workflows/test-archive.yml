@@ -129,11 +129,11 @@ jobs:
           ots stamp public/**/*
       
       - name: Upload to Google Drive
-        uses: adityassubramanian/gdrive-upload-action@v1.1
+        uses: adityak74/google-drive-upload-git-action@v1
         with:
           credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
           folderId: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          filename: 'public/' # Uploads the entire folder including originals and .ots files
+          filename: 'public/**'  # This grabs all files (originals + .ots) recursively
           overwrite: 'true'
 
       - name: Upload Static Download Artifact
