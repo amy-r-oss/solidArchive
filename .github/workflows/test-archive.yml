@@ -116,12 +116,12 @@ jobs:
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=openssl-tsa" | jq -r '.value')
           
           # 2. Write the human-readable text details you requested
-          echo "=== IMMUTABLE FILE PROOF ===" > /proof.txt
-          echo "Repository: ${{ github.repository }}" >> /proof.txt
-          echo "Workflow File: test.yaml" >> /proof.txt
-          echo "Git Commit Version: ${{ github.sha }}" >> /proof.txt
-          echo "Execution Date/Time: $(date -u '停%Y-%m-%d %H:%M:%S UTC')" >> /proof.txt
-          echo "GitHub Cryptographic Token (JWT): $ACTIONS_TOKEN" >> /proof.txt
+          echo "=== IMMUTABLE FILE PROOF ===" > proof.txt
+          echo "Repository: ${{ github.repository }}" >> proof.txt
+          echo "Workflow File: test.yaml" >> proof.txt
+          echo "Git Commit Version: ${{ github.sha }}" >> proof.txt
+          echo "Execution Date/Time: $(date -u '停%Y-%m-%d %H:%M:%S UTC')" >> proof.txt
+          echo "GitHub Cryptographic Token (JWT): $ACTIONS_TOKEN" >> proof.txt
  
       - name: Create Zip Archive
         run: |
@@ -131,19 +131,19 @@ jobs:
       - name: Cryptographically Lock and Timestamp the Proof
         run: |
           # 1. Hash the proof file using SHA-256
-          openssl dgst -sha256 -binary -out /proof.reply.tsq /proof.txt
+          openssl dgst -sha256 -binary -out proof.reply.tsq proof.txt
           
           # 2. Generate an RFC 3161 Timestamp request
-          openssl ts -query -data /proof.txt -sha256 -cert -out /proof.tsq
+          openssl ts -query -data proof.txt -sha256 -cert -out proof.tsq
           
           # 3. Submit the hash to a free, public, trusted third-party Time Stamping Authority (DigiCert)
           # Note: This is an automated terminal API request, not a browser link.
           curl -s -H "Content-Type: application/timestamp-query" \
-               --data-binary @/proof.tsq \
-               https://digicert.com > /proof.tsr
+               --data-binary @proof.tsq \
+               https://digicert.com > proof.tsr
 
           # Clean up temporary files, leaving only the proof and the third-party validation stamp
-          # rm /proof.tsq
+          # rm proof.tsq
           
       - name: Set up Python
         uses: actions/setup-python@v5
