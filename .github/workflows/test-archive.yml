@@ -114,6 +114,11 @@ jobs:
           path: public/ 
           retention-days: 90
       
+      - name: Create Zip Archive
+        run: |
+          # Compress the entire public/ folder into a single archive file
+          zip -r archivebox-backup.zip public/
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -123,18 +128,25 @@ jobs:
         run: |
           pip install opentimestamps-client
       
-      - name: Create OpenTimestamps for public folder
+      - name: Timestamp the Zip Archive
         run: |
-          # This creates .ots files for every file inside the public/ folder
-          ots stamp public/**/*
+          # This stamps only the single zip archive, creating archivebox-backup.zip.ots
+          ots stamp archivebox-backup.zip
       
-      - name: Upload to Google Drive
-        uses: adityak74/google-drive-upload-git-action@main
-        with:
-          credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
-          folderId: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          filename: 'public/**'  # This grabs all files (originals + .ots) recursively
-          overwrite: 'true'
+      - name: Upload to Google Drive using rclone
+        env:
+          GDRIVE_JSON: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        run: |
+          echo "$GDRIVE_JSON" > sa.json
+          export RCLONE_CONFIG_MYDRIVE_TYPE=drive
+          export RCLONE_CONFIG_MYDRIVE_SERVICE_ACCOUNT_FILE=sa.json
+          export RCLONE_CONFIG_MYDRIVE_ROOT_FOLDER_ID="$FOLDER_ID"
+          
+          # Upload both the .zip and the .zip.ots files to Google Drive
+          rclone copy archivebox-backup.zip mydrive: --verbose
+          rclone copy archivebox-backup.zip.ots mydrive: --verbose
+
 
       - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
