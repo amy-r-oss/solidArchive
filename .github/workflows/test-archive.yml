@@ -131,17 +131,14 @@ jobs:
           
       - name: Cryptographically Lock and Timestamp the Proof
         run: |
-          # 1. Hash the proof file using SHA-256
-          openssl dgst -sha256 -binary -out proof.reply.tsq "$GITHUB_WORKSPACE/public/proof.txt"
+          # 1. Generate an RFC 3161 Timestamp request file (.tsq)
+          openssl ts -query -data "$GITHUB_WORKSPACE/public/proof.txt" -sha256 -cert -out "$GITHUB_WORKSPACE/public/proof.tsq"
           
-          # 2. Generate an RFC 3161 Timestamp request
-          openssl ts -query -data "$GITHUB_WORKSPACE/public/proof.txt" -sha256 -cert -out proof.tsq
-          
-          # 3. Submit the hash to a free, public, trusted third-party Time Stamping Authority (DigiCert)
-          # Note: This is an automated terminal API request, not a browser link.
+          # 2. Submit the .tsq file to DigiCert's actual RFC 3161 server endpoint
           curl -s -H "Content-Type: application/timestamp-query" \
-               --data-binary @proof.tsq \
-               https://digicert.com > proof.tsr
+               --data-binary @"$GITHUB_WORKSPACE/public/proof.tsq" \
+               http://timestamp.digicert.com > "$GITHUB_WORKSPACE/public/proof.tsr"
+
 
           # Clean up temporary files, leaving only the proof and the third-party validation stamp
           # rm proof.tsq
