@@ -106,13 +106,6 @@ jobs:
       - name: Show result
         run: |
           find public -maxdepth 4 -type f | sort
-
-      - name: Upload Static Download Artifact 
-        uses: actions/upload-artifact@v4 
-        with: 
-          name: archive-static-download-folder 
-          path: public/ 
-          retention-days: 90
       
       - name: Create Zip Archive
         run: |
@@ -151,9 +144,12 @@ jobs:
           export RCLONE_CONFIG_MYDRIVE_ROOT_FOLDER_ID="$FOLDER_ID"
           
           # 4. Upload files passing specific Google Drive parameters
-          # The --drive-upload-cutoff 0 forces direct ownership alignment to bypass quotas
-          rclone copy archivebox-backup.zip mydrive: --drive-upload-cutoff 0 --verbose
-          rclone copy archivebox-backup.zip.ots mydrive: --drive-upload-cutoff 0 --verbose
+          # Added --drive-acknowledge-abuse to bypass personal drive file scanning blocks
+          rclone copy archivebox-backup.zip mydrive: --drive-upload-cutoff 0 --drive-acknowledge-abuse --verbose
+          rclone copy archivebox-backup.zip.ots mydrive: --drive-upload-cutoff 0 --drive-acknowledge-abuse --verbose
+
+          # 5. Clean up the credential file
+          rm -f sa.json
 
 
       - name: Upload Static Download Artifact
