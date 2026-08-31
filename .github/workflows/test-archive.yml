@@ -107,250 +107,34 @@ jobs:
         run: |
           find public -maxdepth 4 -type f | sort
 
-      # 🔐 OPENIMESTAMP INTEGRATION
-      - name: Setup Python for OpenTimeStamp
-        uses: actions/setup-python@v4
+      - name: Upload Static Download Artifact 
+        uses: actions/upload-artifact@v4 
+        with: 
+          name: archive-static-download-folder 
+          path: public/ 
+          retention-days: 90
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Install OpenTimeStamp and dependencies
+          python-version: '3.x'
+      
+      - name: Install OpenTimestamps CLI
         run: |
-          python -m pip install --upgrade pip
-          pip install opentimestamps requests
-
-      - name: Create artifact archive for OpenTimeStamp
+          pip install opentimestamps-client
+      
+      - name: Create OpenTimestamps for public folder
         run: |
-          cd "$GITHUB_WORKSPACE"
-          tar -czf archive-${{ github.run_id }}-${{ github.run_number }}.tar.gz public/
-          echo "Archive created:"
-          ls -lh archive-*.tar.gz
-
-      - name: Timestamp artifact with OpenTimeStamp
-        run: |
-          python << 'PYTHON_SCRIPT'
-          import os
-          import hashlib
-          import requests
-          import glob
-          import json
-          
-          # Find the archive file
-          workspace = os.getenv('GITHUB_WORKSPACE')
-          archive_files = glob.glob(os.path.join(workspace, 'archive-*.tar.gz'))
-          
-          if not archive_files:
-              print("❌ No archive file found!")
-              exit(1)
-          
-          archive_file = archive_files[0]
-          print(f"📦 Archive file: {archive_file}")
-          
-          # Read file and compute hash
-          with open(archive_file, 'rb') as f:
-              file_data = f.read()
-              file_hash = hashlib.sha256(file_data).digest()
-          
-          print(f"📊 File size: {len(file_data) / (1024*1024):.2f} MB")
-          print(f"🔐 SHA256: {file_hash.hex()}")
-          
-          # Try multiple OpenTimeStamps calendars
-          calendars = [
-              'https://b.cetTime.vr.unam.mx/timestamp',
-              'https://ots.btc.catallaxy.com/timestamp',
-              'https://time.syscoin.org/timestamp',
-          ]
-          
-          ots_created = False
-          
-          for calendar_url in calendars:
-              print(f"\n🌐 Trying: {calendar_url}")
-              
-              try:
-                  response = requests.post(
-                      calendar_url,
-                      data=file_hash,
-                      timeout=60,
-                      headers={'User-Agent': 'solidArchive/1.0'}
-                  )
-                  
-                  if response.status_code == 200:
-                      ots_file = f"{archive_file}.ots"
-                      with open(ots_file, 'wb') as f:
-                          f.write(response.content)
-                      
-                      size = os.path.getsize(ots_file)
-                      print(f"✅ OpenTimeStamp proof created!")
-                      print(f"📄 Proof file: {ots_file}")
-                      print(f"📦 Proof size: {size} bytes")
-                      ots_created = True
-                      break
-                  else:
-                      print(f"   └─ Status {response.status_code}")
-                      
-              except requests.exceptions.Timeout:
-                  print(f"   └─ Timeout")
-              except Exception as e:
-                  print(f"   └─ Error: {str(e)[:60]}")
-          
-          if not ots_created:
-              print("\n⚠️  Could not create OTS proof from any calendar")
-              print("   This is expected if all calendars are temporarily unavailable")
-              print("   The archive will still be backed up to Google Drive")
-          
-          PYTHON_SCRIPT
-
-      - name: Verify OpenTimeStamp proof exists
-        run: |
-          echo "=== Checking for .ots files ==="
-          find "$GITHUB_WORKSPACE" -maxdepth 1 -name "*.ots" -ls
-          
-          # List all files matching archive-*
-          echo ""
-          echo "=== All archive files ==="
-          ls -lh "$GITHUB_WORKSPACE"/archive-* 2>/dev/null || echo "No archive files found"
-
-      - name: Generate OpenTimeStamp verification report
-        run: |
-          ARCHIVE_FILE=$(ls -t "$GITHUB_WORKSPACE"/archive-*.tar.gz | head -1)
-          
-          mkdir -p "$GITHUB_WORKSPACE/ots-verification"
-          
-          # Check if OTS proof exists
-          OTS_CREATED="false"
-          if [ -f "${ARCHIVE_FILE}.ots" ]; then
-            OTS_CREATED="true"
-          fi
-          
-          cat > "$GITHUB_WORKSPACE/ots-verification/archive-metadata.json" << EOF
-          {
-            "run_id": "${{ github.run_id }}",
-            "run_number": "${{ github.run_number }}",
-            "commit": "${{ github.sha }}",
-            "branch": "${{ github.ref_name }}",
-            "url_archived": "${{ inputs.url }}",
-            "timestamp": "$(date -u -Iseconds)",
-            "archive_file": "$(basename $ARCHIVE_FILE)",
-            "ots_proof_created": $OTS_CREATED
-          }
-          EOF
-          
-          cat "$GITHUB_WORKSPACE/ots-verification/archive-metadata.json"
-
-      - name: Setup Google Drive authentication
-        env:
-          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
-        run: |
-          mkdir -p "$HOME/.config/gdown"
-          echo "$GOOGLE_DRIVE_CREDENTIALS" > "$HOME/.config/gdown/credentials.json"
-          pip install --quiet google-auth-oauthlib google-auth-httplib2 google-api-python-client
-
-      - name: Upload artifacts to Google Drive
-        env:
-          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
-        run: |
-          python << 'PYTHON_SCRIPT'
-          import os
-          import glob
-          import time
-          from google.oauth2.service_account import Credentials
-          from googleapiclient.discovery import build
-          from googleapiclient.http import MediaFileUpload
-          
-          # Setup auth
-          creds_path = os.path.expanduser("~/.config/gdown/credentials.json")
-          creds_json = os.getenv('GOOGLE_DRIVE_CREDENTIALS')
-          with open(creds_path, 'w') as f:
-              f.write(creds_json)
-          
-          SCOPES = ['https://www.googleapis.com/auth/drive']
-          try:
-              credentials = Credentials.from_service_account_file(creds_path, scopes=SCOPES)
-              drive_service = build('drive', 'v3', credentials=credentials)
-          except Exception as e:
-              print(f"❌ Auth failed: {e}")
-              exit(1)
-          
-          folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
-          workspace = os.getenv('GITHUB_WORKSPACE')
-          
-          print(f"📁 Target folder: {folder_id}")
-          print(f"📂 Workspace: {workspace}\n")
-          
-          # Find files to upload
-          files_to_upload = []
-          
-          # Archive tar.gz
-          archive_files = glob.glob(os.path.join(workspace, 'archive-*.tar.gz'))
-          for f in archive_files:
-              # Skip if .ots file exists (we'll upload that separately)
-              if not f.endswith('.ots'):
-                  files_to_upload.append((f, 'Archive Artifact'))
-                  print(f"✅ Found: {os.path.basename(f)} ({os.path.getsize(f) / (1024*1024):.1f} MB)")
-          
-          # OTS proof files
-          ots_files = glob.glob(os.path.join(workspace, 'archive-*.tar.gz.ots'))
-          for f in ots_files:
-              files_to_upload.append((f, 'OpenTimeStamp Proof'))
-              print(f"✅ Found: {os.path.basename(f)} ({os.path.getsize(f)} bytes)")
-          
-          # Metadata
-          metadata_path = os.path.join(workspace, 'ots-verification', 'archive-metadata.json')
-          if os.path.exists(metadata_path):
-              files_to_upload.append((metadata_path, 'Archive Metadata'))
-              print(f"✅ Found: archive-metadata.json ({os.path.getsize(metadata_path)} bytes)")
-          
-          if not files_to_upload:
-              print("\n❌ NO FILES TO UPLOAD")
-              exit(1)
-          
-          print(f"\n📤 Uploading {len(files_to_upload)} file(s)...\n")
-          
-          uploaded_count = 0
-          for file_path, description in files_to_upload:
-              file_name = os.path.basename(file_path)
-              file_size = os.path.getsize(file_path)
-              
-              print(f"📤 {file_name} ({file_size / (1024*1024):.2f} MB)")
-              
-              file_metadata = {
-                  'name': file_name,
-                  'parents': [folder_id],
-                  'description': description
-              }
-              
-              try:
-                  media = MediaFileUpload(file_path, resumable=True, chunksize=5242880)
-                  request = drive_service.files().create(
-                      body=file_metadata,
-                      media_body=media,
-                      fields='id, webViewLink',
-                      supportsAllDrives=True
-                  )
-                  
-                  response = None
-                  while response is None:
-                      try:
-                          status, response = request.next_chunk()
-                          if status:
-                              print(f"   └─ {int(status.progress() * 100)}%")
-                      except Exception as e:
-                          print(f"   └─ Retrying... {str(e)[:60]}")
-                          time.sleep(3)
-                  
-                  if response:
-                      print(f"   └─ ✅ Done")
-                      uploaded_count += 1
-                      
-              except Exception as e:
-                  print(f"   └─ ❌ {str(e)[:80]}")
-          
-          print(f"\n{'='*50}")
-          print(f"✅ {uploaded_count}/{len(files_to_upload)} files uploaded")
-          if uploaded_count > 0:
-              print(f"📁 https://drive.google.com/drive/folders/{folder_id}")
-          
-          PYTHON_SCRIPT
+          # This creates .ots files for every file inside the public/ folder
+          ots stamp public/**/*
+      
+      - name: Upload to Google Drive
+        uses: adityassubramanian/gdrive-upload-action@v1.1
+        with:
+          credentials: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          folderId: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          filename: 'public/' # Uploads the entire folder including originals and .ots files
+          overwrite: 'true'
 
       - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
