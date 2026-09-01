@@ -21,6 +21,7 @@ import pytest
 from .migrations_helpers import (
     SCHEMA_0_7,
     SCHEMA_0_8,
+    current_snapshot_dir,
     filesystem_manifest,
     seed_0_8_data,
     seed_0_7_data,
@@ -800,7 +801,7 @@ def test_update_preserves_legacy_folder_timestamp_over_index_float_variant(tmp_p
     conn.close()
 
     assert row == (timestamp,)
-    assert (work_dir / "archive" / timestamp).is_symlink()
+    assert not (work_dir / "archive" / timestamp).exists()
     assert not (work_dir / "archive" / f"{timestamp}.0").exists()
     assert not (work_dir / "invalid").exists()
 
@@ -842,8 +843,8 @@ def test_update_preserves_distinct_legacy_dirs_with_integer_and_float_timestamps
     conn.close()
 
     assert rows == [("1508259732",), ("1508259732.0",)]
-    assert (work_dir / "archive" / "1508259732").is_symlink()
-    assert (work_dir / "archive" / "1508259732.0").is_symlink()
+    assert not (work_dir / "archive" / "1508259732").exists()
+    assert not (work_dir / "archive" / "1508259732.0").exists()
     assert not (work_dir / "invalid").exists()
 
 
@@ -897,10 +898,7 @@ def test_update_preserves_legacy_plugin_directory_without_output_files(migration
         (snapshot["id"],),
     ).fetchall()
     conn.close()
-    assert len(rows) == 2
-    assert all(output_str == "" for output_str, _output_files, _hook_name in rows)
-    assert len({hook_name for _output_str, _output_files, hook_name in rows}) == 2
-    assert sum(not hook_name for _output_str, _output_files, hook_name in rows) == 1
+    assert rows == [("", "{}", "")]
 
 
 def test_07_filesystem_hop_preserves_complete_output_tree(tmp_path):
@@ -991,8 +989,8 @@ def test_07_filesystem_hop_preserves_complete_output_tree(tmp_path):
 
     for timestamp, expected_tree in original_trees.items():
         legacy_dir = tmp_path / "archive" / timestamp
-        assert legacy_dir.is_symlink()
-        migrated_tree = filesystem_manifest(legacy_dir.resolve())
+        assert not legacy_dir.exists()
+        migrated_tree = filesystem_manifest(current_snapshot_dir(tmp_path, db_path, timestamp))
         assert {path: migrated_tree.get(path) for path in expected_tree} == expected_tree
     assert (destination / "preexisting-output.bin").read_bytes() == b"destination-only output"
 
@@ -1062,10 +1060,13 @@ def test_each_declared_filesystem_hop_preserves_outputs(migration_08_data, fs_ve
     (source_dir / "unknown-empty-dir" / "nested").mkdir(parents=True)
     expected_tree = filesystem_manifest(source_dir)
 
-    result = run_archivebox_migration_cmd(work_dir, ["update"], timeout=180)
+    result = run_archivebox_migration_cmd(work_dir, ["update", "--migrate-only"], timeout=180)
     assert result.returncode == 0, result.stderr
 
-    migrated_dir = source_dir.resolve()
+    migrated_dir = current_snapshot_dir(work_dir, db_path, snapshot["timestamp"])
     assert {path: filesystem_manifest(migrated_dir).get(path) for path in expected_tree} == expected_tree
+    if fs_version in ("0.7.0", "0.8.0", "0.8.5"):
+        assert not source_dir.exists()
+        assert not source_dir.is_symlink()
     with sqlite3.connect(db_path) as connection:
         assert connection.execute("SELECT fs_version FROM core_snapshot WHERE id = ?", (snapshot["id"],)).fetchone() == ("0.9.4",)

@@ -81,13 +81,15 @@ ARCHIVEBOX_PYTHON="${ARCHIVEBOX_PYTHON:-3.13}"
 ARCHIVEBOX_PACKAGE="${ARCHIVEBOX_PACKAGE:-archivebox>=0.9.0rc0,<0.10}"
 ARCHIVEBOX_PLATFORM="${ARCHIVEBOX_PLATFORM:-}"
 ARCHIVEBOX_COMPOSE_URL="${ARCHIVEBOX_COMPOSE_URL:-https://raw.githubusercontent.com/ArchiveBox/ArchiveBox/${ARCHIVEBOX_BRANCH}/docker-compose.yml}"
-ABXPKG_PACKAGE="${ABXPKG_PACKAGE:-abxpkg==1.12.67}"
+ABXPKG_PACKAGE="${ABXPKG_PACKAGE:-abxpkg==1.12.109}"
 ABXPKG_LIB_DIR="${ABXPKG_LIB_DIR:-$HOME/.cache/archivebox/setup-abxpkg}"
 ARCHIVEBOX_HOME_DIR="$HOME/archivebox"
 ARCHIVEBOX_DATA_DIR="$ARCHIVEBOX_HOME_DIR/data"
 BOOTSTRAP_UV_BINARY=""
 UV_BINARY=""
 DOCKER_BINARY=""
+CONTAINER_ENGINE_NAME=""
+CONTAINER_ENGINE_LABEL=""
 CURL_BINARY=""
 OPEN_BINARY=""
 ARCHIVEBOX_BINARY=""
@@ -121,6 +123,19 @@ fix_root_install_ownership() {
             chown "$ARCHIVEBOX_SYSTEM_UID:$ARCHIVEBOX_SYSTEM_GID" "$path"
         fi
     done
+}
+
+run_as_archivebox_user() {
+    if [ "$RUNNING_AS_ROOT" != "true" ]; then
+        "$@"
+        return
+    fi
+
+    if command -v runuser >/dev/null 2>&1; then
+        (cd "$HOME" && runuser -u "$ARCHIVEBOX_SYSTEM_USER" -- env HOME="$HOME" PATH="$PATH" ABXPKG_LIB_DIR="$ABXPKG_LIB_DIR" "$@")
+    else
+        (cd "$HOME" && sudo -u "$ARCHIVEBOX_SYSTEM_USER" env HOME="$HOME" PATH="$PATH" ABXPKG_LIB_DIR="$ABXPKG_LIB_DIR" "$@")
+    fi
 }
 
 ensure_archivebox_data_dir() {
@@ -209,7 +224,7 @@ wait_for_archivebox() {
 
 open_archivebox() {
     if [ -n "$OPEN_BINARY" ] && [ -t 1 ]; then
-        "$OPEN_BINARY" "http://127.0.0.1:8000" || true
+        "$OPEN_BINARY" "http://admin.archivebox.localhost:8000/admin/" || true
     fi
 }
 
@@ -227,18 +242,24 @@ ensure_uv() {
             fix_root_install_ownership
             BOOTSTRAP_UV_BINARY="$HOME/.local/bin/uv"
         fi
+        if [ "$RUNNING_AS_ROOT" = "true" ] && [ "${BOOTSTRAP_UV_BINARY#"$HOME"/}" != "$BOOTSTRAP_UV_BINARY" ]; then
+            chown "$ARCHIVEBOX_SYSTEM_UID:$ARCHIVEBOX_SYSTEM_GID" "$BOOTSTRAP_UV_BINARY"
+            if [ -e "$HOME/.local/bin/uvx" ]; then
+                chown "$ARCHIVEBOX_SYSTEM_UID:$ARCHIVEBOX_SYSTEM_GID" "$HOME/.local/bin/uvx"
+            fi
+        fi
         return 0
     fi
 
     echo "[+] Installing uv..."
     if command -v curl > /dev/null 2>&1; then
         if [ "$RUNNING_AS_ROOT" = "true" ]; then
-            curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh
+            curl -LsSf https://astral.sh/uv/install.sh | run_as_archivebox_user env UV_NO_MODIFY_PATH=1 sh
         else
             curl -LsSf https://astral.sh/uv/install.sh | sh
         fi
     elif command -v wget > /dev/null 2>&1; then
-        wget -qO- https://astral.sh/uv/install.sh | sh
+        wget -qO- https://astral.sh/uv/install.sh | run_as_archivebox_user sh
     else
         echo "[X] curl or wget is required to install uv."
         exit 1
@@ -270,7 +291,7 @@ resolve_setup_binary() {
     fi
     abxpkg_args+=("$binary_name")
 
-    "$BOOTSTRAP_UV_BINARY" tool run --from "$ABXPKG_PACKAGE" abxpkg "${abxpkg_args[@]}" >/dev/null
+    run_as_archivebox_user "$BOOTSTRAP_UV_BINARY" tool run --from "$ABXPKG_PACKAGE" abxpkg "${abxpkg_args[@]}" >/dev/null
 
     resolved_binary="$ABXPKG_LIB_DIR/env/bin/$binary_name"
     test -L "$resolved_binary"
@@ -280,6 +301,7 @@ resolve_setup_binary() {
 prepare_abxpkg_environment() {
     ensure_uv
     mkdir -p "$ABXPKG_LIB_DIR/env/bin"
+    fix_root_install_ownership
     export ABXPKG_LIB_DIR
     export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
 
@@ -301,9 +323,9 @@ resolve_setup_curl() {
 install_archivebox_with_uv() {
     echo
     echo "[+] Installing ArchiveBox python tool using uv from $ARCHIVEBOX_PACKAGE..."
-    "$UV_BINARY" --no-config tool install --python "$ARCHIVEBOX_PYTHON" --prerelease explicit --upgrade "$ARCHIVEBOX_PACKAGE"
+    run_as_archivebox_user "$UV_BINARY" --no-config tool install --python "$ARCHIVEBOX_PYTHON" --prerelease explicit --upgrade "$ARCHIVEBOX_PACKAGE"
 
-    uv_tool_bin_dir="$("$UV_BINARY" --no-config tool dir --bin)"
+    uv_tool_bin_dir="$(run_as_archivebox_user "$UV_BINARY" --no-config tool dir --bin)"
     ARCHIVEBOX_BINARY="$uv_tool_bin_dir/archivebox"
     test -x "$ARCHIVEBOX_BINARY"
     if [ "$RUNNING_AS_ROOT" != "true" ]; then
@@ -344,23 +366,37 @@ select_archivebox_lib_dir() {
 }
 
 prepare_abxpkg_environment
-if resolve_setup_binary docker env false 2>/dev/null; then
-    DOCKER_BINARY="$ABXPKG_LIB_DIR/env/bin/docker"
-fi
-
 DOCKER_IMAGE_READY="false"
-if [ -n "$DOCKER_BINARY" ] && docker_pull_archivebox; then
-    DOCKER_IMAGE_READY="true"
-fi
+for container_engine in docker podman; do
+    if ! resolve_setup_binary "$container_engine" env false 2>/dev/null; then
+        continue
+    fi
+
+    DOCKER_BINARY="$ABXPKG_LIB_DIR/env/bin/$container_engine"
+    if docker_pull_archivebox; then
+        CONTAINER_ENGINE_NAME="$container_engine"
+        case "$container_engine" in
+            docker) CONTAINER_ENGINE_LABEL="Docker" ;;
+            podman) CONTAINER_ENGINE_LABEL="Podman" ;;
+        esac
+        DOCKER_IMAGE_READY="true"
+        break
+    fi
+done
 
 if [ "$DOCKER_IMAGE_READY" = "true" ] && "$DOCKER_BINARY" compose version > /dev/null; then
     resolve_setup_curl
-    echo "[+] Initializing an ArchiveBox data folder at $ARCHIVEBOX_DATA_DIR using Docker Compose..."
+    echo "[+] Initializing an ArchiveBox data folder at $ARCHIVEBOX_DATA_DIR using $CONTAINER_ENGINE_LABEL Compose..."
     ensure_archivebox_data_dir || exit 1
     cd "$ARCHIVEBOX_HOME_DIR"
     migrate_legacy_collection_dir
     if [ ! -f docker-compose.yml ]; then
-        "$CURL_BINARY" -fsSL "$ARCHIVEBOX_COMPOSE_URL" > docker-compose.yml
+        compose_download="$(mktemp "$ARCHIVEBOX_HOME_DIR/.docker-compose.yml.XXXXXX")"
+        if ! "$CURL_BINARY" -fsSL "$ARCHIVEBOX_COMPOSE_URL" -o "$compose_download"; then
+            rm -f "$compose_download"
+            exit 1
+        fi
+        mv "$compose_download" docker-compose.yml
         if [ "$RUNNING_AS_ROOT" = "true" ]; then
             chown "$ARCHIVEBOX_SYSTEM_UID:$ARCHIVEBOX_SYSTEM_GID" docker-compose.yml
         fi
@@ -369,25 +405,26 @@ if [ "$DOCKER_IMAGE_READY" = "true" ] && "$DOCKER_BINARY" compose version > /dev
     docker_compose_run_archivebox init
     docker_compose_run_archivebox install
     echo
-    echo "[+] Starting ArchiveBox server using: docker compose up -d..."
+    echo "[+] Starting ArchiveBox server using: $CONTAINER_ENGINE_NAME compose up -d..."
     "$DOCKER_BINARY" compose up -d
     wait_for_archivebox
     open_archivebox
     echo
     echo "[√] Server started on http://127.0.0.1:8000 and data directory initialized in $ARCHIVEBOX_DATA_DIR. Usage:"
     echo "    cd $ARCHIVEBOX_HOME_DIR"
-    echo "    ${FOLLOWUP_SUDO}docker compose ps"
-    echo "    ${FOLLOWUP_SUDO}docker compose down"
-    echo "    ${FOLLOWUP_SUDO}env ARCHIVEBOX_IMAGE=$ARCHIVEBOX_IMAGE docker compose pull"
-    echo "    ${FOLLOWUP_SUDO}docker compose up"
-    echo "    ${FOLLOWUP_SUDO}docker compose exec archivebox archivebox manage createsuperuser"
-    echo "    ${FOLLOWUP_SUDO}docker compose exec archivebox archivebox add 'https://example.com'"
-    echo "    ${FOLLOWUP_SUDO}docker compose exec archivebox archivebox list"
-    echo "    ${FOLLOWUP_SUDO}docker compose exec archivebox archivebox help"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME compose ps"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME compose down"
+    echo "    ${FOLLOWUP_SUDO}env ARCHIVEBOX_IMAGE=$ARCHIVEBOX_IMAGE $CONTAINER_ENGINE_NAME compose pull"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME compose up"
+    echo "    Open http://localhost:8000/admin/ to create the first admin and finish web setup."
+    echo "    (When running remotely, replace localhost with this server's IP address or hostname.)"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME compose exec archivebox archivebox add 'https://example.com'"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME compose exec archivebox archivebox list"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME compose exec archivebox archivebox help"
     exit 0
 elif [ "$DOCKER_IMAGE_READY" = "true" ]; then
     resolve_setup_curl
-    echo "[+] Initializing an ArchiveBox data folder at $ARCHIVEBOX_DATA_DIR using Docker..."
+    echo "[+] Initializing an ArchiveBox data folder at $ARCHIVEBOX_DATA_DIR using $CONTAINER_ENGINE_LABEL..."
     ensure_archivebox_data_dir || exit 1
     cd "$ARCHIVEBOX_HOME_DIR"
     migrate_legacy_collection_dir
@@ -395,7 +432,7 @@ elif [ "$DOCKER_IMAGE_READY" = "true" ]; then
     docker_run_archivebox_init
     docker_run_archivebox_install
     echo
-    echo "[+] Starting ArchiveBox server using: docker run -d $ARCHIVEBOX_IMAGE..."
+    echo "[+] Starting ArchiveBox server using: $CONTAINER_ENGINE_NAME run -d $ARCHIVEBOX_IMAGE..."
     "$DOCKER_BINARY" rm -f archivebox >/dev/null 2>&1 || true
     docker_run_archivebox_server
     wait_for_archivebox
@@ -403,22 +440,24 @@ elif [ "$DOCKER_IMAGE_READY" = "true" ]; then
     echo
     echo "[√] Server started on http://127.0.0.1:8000 and data directory initialized in $ARCHIVEBOX_DATA_DIR. Usage:"
     echo "    cd $ARCHIVEBOX_DATA_DIR"
-    echo "    ${FOLLOWUP_SUDO}docker ps --filter name=archivebox"
-    echo "    ${FOLLOWUP_SUDO}docker rm -f archivebox"
-    echo "    ${FOLLOWUP_SUDO}docker pull $ARCHIVEBOX_IMAGE"
-    echo "    ${FOLLOWUP_SUDO}docker run $DOCKER_PLATFORM_ARGS -v $PWD:/data -d -p 8000:8000 --name=archivebox $ARCHIVEBOX_IMAGE"
-    echo "    ${FOLLOWUP_SUDO}docker run $DOCKER_PLATFORM_ARGS -v $PWD:/data -it $ARCHIVEBOX_IMAGE manage createsuperuser"
-    echo "    ${FOLLOWUP_SUDO}docker run $DOCKER_PLATFORM_ARGS -v $PWD:/data -it $ARCHIVEBOX_IMAGE add 'https://example.com'"
-    echo "    ${FOLLOWUP_SUDO}docker run $DOCKER_PLATFORM_ARGS -v $PWD:/data -it $ARCHIVEBOX_IMAGE list"
-    echo "    ${FOLLOWUP_SUDO}docker run $DOCKER_PLATFORM_ARGS -v $PWD:/data -it $ARCHIVEBOX_IMAGE help"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME ps --filter name=archivebox"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME rm -f archivebox"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME pull $ARCHIVEBOX_IMAGE"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME run $DOCKER_PLATFORM_ARGS -v $PWD:/data -d -p 8000:8000 --name=archivebox $ARCHIVEBOX_IMAGE"
+    echo "    Open http://localhost:8000/admin/ to create the first admin and finish web setup."
+    echo "    (When running remotely, replace localhost with this server's IP address or hostname.)"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME run $DOCKER_PLATFORM_ARGS -v $PWD:/data -it $ARCHIVEBOX_IMAGE add 'https://example.com'"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME run $DOCKER_PLATFORM_ARGS -v $PWD:/data -it $ARCHIVEBOX_IMAGE list"
+    echo "    ${FOLLOWUP_SUDO}$CONTAINER_ENGINE_NAME run $DOCKER_PLATFORM_ARGS -v $PWD:/data -it $ARCHIVEBOX_IMAGE help"
     exit 0
 fi
 
 echo
-echo "[!] It's highly recommended to use ArchiveBox with Docker, but Docker is unavailable (not installed, not running, or not accessible to this user)."
+echo "[!] It's highly recommended to use ArchiveBox with Docker Compose or Podman Compose, but neither container engine is available."
 echo
-echo "    ⚠️ If you want to use Docker, press [Ctrl-C] to cancel now. ⚠️"
-echo "        Check 'docker info'. Start Docker Desktop on macOS, or rerun this script with sudo on Ubuntu if Docker reports a socket permission error."
+echo "    ⚠️ If you want to use Docker or Podman, press [Ctrl-C] to cancel now. ⚠️"
+echo "        Check 'docker info' or 'podman info'. Start the container engine or fix its socket access, then rerun."
+echo "        Rerunning with sudo intentionally creates a system-owned deployment under /var/lib/archivebox/archivebox instead of ~/archivebox."
 echo "        Install Docker if needed: https://docs.docker.com/get-docker/"
 echo
 echo "Otherwise, install will continue with uv in 12s... (press [Ctrl+C] to cancel)"
@@ -469,7 +508,8 @@ echo
 echo "[√] Server started on http://127.0.0.1:8000 and data directory initialized in $ARCHIVEBOX_DATA_DIR. Usage:"
 echo "    cd $ARCHIVEBOX_DATA_DIR                            # see your data dir"
 echo "    ${FOLLOWUP_SUDO}archivebox server 0.0.0.0:8000                     # start server process"
-echo "    ${FOLLOWUP_SUDO}archivebox manage createsuperuser                  # add an admin user+pass"
+echo "    Open http://localhost:8000/admin/ to create the first admin and finish web setup."
+echo "    (When running remotely, replace localhost with this server's IP address or hostname.)"
 echo "    ps aux | grep archivebox                           # see server process pid"
 echo "    ${FOLLOWUP_SUDO}pkill -f 'archivebox server'                       # stop the server"
 echo "    curl -fsSL 'https://raw.githubusercontent.com/ArchiveBox/ArchiveBox/dev/bin/setup.sh' | ${FOLLOWUP_SUDO}bash  # update versions"

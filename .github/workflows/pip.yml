@@ -2,6 +2,12 @@ name: Build Pip package
 
 on:
   workflow_call:
+    inputs:
+      full_tests:
+        description: Run the full package compatibility matrix instead of one release smoke check
+        required: false
+        default: true
+        type: boolean
 
 env:
   UV_VERSION: "0.11.3"
@@ -58,6 +64,21 @@ jobs:
           Path("dist/SHA256SUMS").write_text("\n".join(checksum_lines) + "\n")
           PY
 
+      - name: Release wheel import and CLI smoke
+        if: ${{ !inputs.full_tests }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          shopt -s nullglob
+          wheels=(dist/archivebox-*.whl)
+          [[ "${#wheels[@]}" -eq 1 ]]
+          uv sync --locked --no-cache --no-sources --no-dev --no-install-project
+          uv pip install --no-cache --no-deps --python .venv/bin/python "${wheels[0]}"
+          unset PYTHONPATH
+          cd "$(mktemp -d)"
+          VIRTUAL_ENV="$GITHUB_WORKSPACE/.venv" uv run --no-cache --active --no-project python -c 'import archivebox'
+          VIRTUAL_ENV="$GITHUB_WORKSPACE/.venv" uv run --no-cache --active --no-project archivebox version
+
       - name: Upload every distribution
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -68,6 +89,7 @@ jobs:
 
   install-smoke:
     name: install ${{ matrix.artifact }} / Python ${{ matrix.python }} / ${{ matrix.os }}
+    if: inputs.full_tests
     needs: build
     runs-on: ${{ matrix.os }}
     strategy:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from django.db import IntegrityError
@@ -210,15 +211,41 @@ def live_runner_processes(*, data_dir: str | Path, exclude_id=None):
     machine = Machine.current()
     Process.cleanup_stale_running(machine=machine)
     qs = Process.objects.filter(
-        machine=machine,
         status=Process.StatusChoices.RUNNING,
         process_type=Process.TypeChoices.ORCHESTRATOR,
         worker_type__in=RUNNER_GATE_WORKER_TYPES,
         pwd=str(data_dir),
     )
+    foreign_machine_exists = qs.exclude(machine=machine).exists()
+    qs = qs.filter(machine=machine)
     if exclude_id is not None:
         qs = qs.exclude(id=exclude_id)
-    return [process for process in qs.order_by("started_at", "created_at").iterator(chunk_size=20) if process.is_running]
+
+    live = []
+    foreign_namespace_ids = []
+    for process in qs.order_by("started_at", "created_at").iterator(chunk_size=20):
+        if not process.shares_pid_namespace:
+            foreign_namespace_ids.append(process.id)
+            continue
+        if process.is_running:
+            live.append(process)
+    if foreign_machine_exists or foreign_namespace_ids:
+        rprint(
+            "[bold yellow]WARNING: Multiple orchestrators sharing a single collection is not officially supported! "
+            "Corruption may occur if you run two ArchiveBox workers on the same collection at once.[/bold yellow]",
+            file=sys.stderr,
+            soft_wrap=True,
+        )
+    if foreign_namespace_ids:
+        now = timezone.now()
+        Process.objects.filter(id__in=foreign_namespace_ids, status=Process.StatusChoices.RUNNING).update(
+            status=Process.StatusChoices.EXITED,
+            exit_code=0,
+            ended_at=now,
+            retry_at=None,
+            modified_at=now,
+        )
+    return live
 
 
 def enter_single_runner_gate(command, *, data_dir: str | Path, graceful_timeout: float = 5.0) -> bool:
@@ -323,12 +350,22 @@ def standby_until_runtime_stack_needed(command, *, data_dir: str | Path, interva
     return {"resumed": announced, "previous_owner_pid": previous_owner_pid}
 
 
-def standby_until_foreground_runner_needed(command, *, data_dir: str | Path, interval: float = 2.0) -> dict[str, object]:
+def standby_until_foreground_runner_needed(
+    command,
+    *,
+    data_dir: str | Path,
+    interval: float = 2.0,
+    work_is_complete: Callable[[], bool] | None = None,
+) -> dict[str, object]:
     from archivebox.workers.supervisord_util import reap_foreground_supervisord_process
 
     announced = False
     previous_owner_pid = None
-    while not command_owns_foreground_runner(command, data_dir=data_dir):
+    while True:
+        if work_is_complete is not None and work_is_complete():
+            return {"resumed": announced, "previous_owner_pid": previous_owner_pid, "work_completed": True}
+        if command_owns_foreground_runner(command, data_dir=data_dir):
+            break
         reap_foreground_supervisord_process()
         if not announced:
             owner = foreground_runner_owner(data_dir=data_dir)
@@ -343,4 +380,4 @@ def standby_until_foreground_runner_needed(command, *, data_dir: str | Path, int
         time.sleep(interval)
     command.modified_at = timezone.now()
     command.save(update_fields=["modified_at"])
-    return {"resumed": announced, "previous_owner_pid": previous_owner_pid}
+    return {"resumed": announced, "previous_owner_pid": previous_owner_pid, "work_completed": False}

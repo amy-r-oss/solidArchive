@@ -19,6 +19,12 @@ done
 TAG_PREFIX=v
 PYPI_PACKAGE=archivebox
 
+pypi_release_json() {
+    "$CURL_BINARY" -fsSL \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
+}
+
 VERSION="$($UV_BINARY run --no-cache --no-project python - <<'PY'
 from pathlib import Path
 import json
@@ -115,7 +121,7 @@ if [[ -n "$TAG_TARGET" && "$TAG_TARGET" != "$RELEASE_SHA" ]]; then
         echo "Existing tag $TAG is not on $RELEASE_BRANCH" >&2
         exit 1
     }
-    PYPI_URLS="$($CURL_BINARY -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | $JQ_BINARY -c --arg version "$VERSION" ".releases[\$version] // []")"
+    PYPI_URLS="$(pypi_release_json "$VERSION" | $JQ_BINARY -c '.urls')"
     PYPI_URLS="$PYPI_URLS" VERSION="$VERSION" $UV_BINARY run --no-cache --no-project python - <<'PY'
 import json
 import os
@@ -223,7 +229,7 @@ SDISTS=("$RELEASE_DISTRIBUTIONS_DIR"/archivebox-*.tar.gz)
     exit 1
 }
 
-PYPI_URLS="$($CURL_BINARY -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | $JQ_BINARY -c --arg version "$VERSION" ".releases[\$version] // []")"
+PYPI_URLS="$(pypi_release_json "$VERSION" | $JQ_BINARY -c '.urls')" || PYPI_URLS='[]'
 PYPI_STATUS_OUTPUT="$(PYPI_URLS="$PYPI_URLS" RELEASE_DISTRIBUTIONS_DIR="$RELEASE_DISTRIBUTIONS_DIR" VERSION="$VERSION" $UV_BINARY run --no-cache --no-project python - <<'PY'
 import json
 import os

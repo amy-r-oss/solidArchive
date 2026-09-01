@@ -19,10 +19,10 @@ from urllib.parse import quote, urlparse
 from abx_plugins.plugins.base.utils import BASE_CONFIG_PATH, build_config_model, resolve_plugin_configs
 from django.db import DatabaseError
 from pydantic import BaseModel, Field, PrivateAttr, create_model, field_validator, model_validator
-from pydantic_settings import SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from rich.console import Console
 
-from archivebox.config.configset import COMPUTED_CONFIG_KEYS, BaseConfigSet, IniConfigSettingsSource
+from archivebox.config.configset import COMPUTED_CONFIG_KEYS, BaseConfigSet, decode_config_inputs
 
 from .constants import CONSTANTS
 from .ldap import LDAPConfig
@@ -406,7 +406,11 @@ class DatabaseConfig(BaseConfigSet):
     DATABASE_USER: str = Field(default="archivebox", alias="ARCHIVEBOX_DATABASE_USER")
     DATABASE_PASSWORD: str = Field(default="", alias="ARCHIVEBOX_DATABASE_PASSWORD")
     SQLITE_JOURNAL_MODE: str = Field(
-        default="WAL",
+        # Docker collections commonly live on a host bind mount. WAL's -shm
+        # locking is only safe when every SQLite process is on the same host;
+        # Docker Desktop/OrbStack place the container and host in different
+        # locking domains and a host-side reader can corrupt the live DB.
+        default="DELETE" if IN_DOCKER else "WAL",
         alias="ARCHIVEBOX_SQLITE_JOURNAL_MODE",
         pattern=r"(?i)^(DELETE|TRUNCATE|PERSIST|MEMORY|WAL|OFF)$",
     )
@@ -418,6 +422,15 @@ class DatabaseConfig(BaseConfigSet):
     SQLITE_BUSY_TIMEOUT: int = Field(default=30000, alias="ARCHIVEBOX_SQLITE_BUSY_TIMEOUT", ge=0)
     SQLITE_LOCK_RETRY_TIMEOUT: float = Field(default=60.0, alias="ARCHIVEBOX_SQLITE_LOCK_RETRY_TIMEOUT", ge=0)
     SQLITE_LOCK_RETRY_INTERVAL: float = Field(default=5.0, alias="ARCHIVEBOX_SQLITE_LOCK_RETRY_INTERVAL", gt=0)
+
+    @model_validator(mode="after")
+    def reject_docker_sqlite_wal(self):
+        if IN_DOCKER and self.DATABASE_ENGINE.lower() == "sqlite" and self.SQLITE_JOURNAL_MODE.upper() == "WAL":
+            raise ValueError(
+                "SQLITE_JOURNAL_MODE=WAL is unsafe for Docker collections because host bind mounts cross SQLite "
+                "locking domains; use DELETE (the Docker default) or PostgreSQL",
+            )
+        return self
 
 
 class ArchivingConfig(BaseConfigSet):
@@ -885,6 +898,12 @@ PLUGIN_CONFIG_SCHEMAS = _discover_plugin_config_schemas()
 ArchiveBoxConfig = _build_archivebox_config_model(PLUGIN_CONFIG_SCHEMAS)
 
 
+class ArchiveBoxSourceSettings(ArchiveBoxConfig, BaseSettings):
+    """Environment and INI source loader for the pure runtime config model."""
+
+    model_config = SettingsConfigDict(**{**ArchiveBoxConfig.model_config, "extra": "ignore"})
+
+
 def _normalize_plugins_config_value(value: Any) -> set[str]:
     if value is None:
         return set()
@@ -1041,7 +1060,9 @@ def get_request_config(request: Any, *, resolve_plugins: bool = False) -> Archiv
     request_config = request_state.get("archivebox_config")
     request_config_resolves_plugins = bool(request_state.get("_archivebox_config_resolves_plugins", False))
     if request_config is None or (resolve_plugins and not request_config_resolves_plugins):
-        request_config = get_config(resolve_plugins=resolve_plugins)
+        from django.conf import settings
+
+        request_config = get_config(base_config=settings.CONFIG, resolve_plugins=resolve_plugins)
         request._archivebox_config_resolves_plugins = resolve_plugins
     if request_config.SERVER_SECURITY_MODE == "auto":
         request_host = (urlparse(f"//{request.get_host()}").hostname or "").lower().rstrip(".")
@@ -1096,9 +1117,11 @@ def get_config(
     config_data: ConfigPayload = dict(defaults or {})
     config_data["PERSONAS_DIR"] = str(CONSTANTS.PERSONAS_DIR)
     base_config_payload: ConfigPayload = {}
-    base_config_model = ArchiveBoxConfig()
+    file_config: dict[str, Any] | None = None
+    base_config_model = ArchiveBoxSourceSettings() if base_config is None else None
 
     if crawl_config_base:
+        assert base_config_model is not None
         config_data.update(
             normalize_runtime_config(base_config_model.model_dump(mode="json"), exclude_runtime_derived=True, json_safe=False),
         )
@@ -1110,10 +1133,12 @@ def get_config(
             base_config_payload.update(dict(base_config))
         config_data.update(normalize_runtime_config(base_config_payload, exclude_runtime_derived=True, json_safe=False))
     else:
+        assert base_config_model is not None
         config_data.update(
             normalize_runtime_config(base_config_model.model_dump(mode="json"), exclude_runtime_derived=True, json_safe=False),
         )
-        legacy_config = {**BaseConfigSet.load_from_file(CONSTANTS.CONFIG_FILE), **os.environ}
+        file_config = BaseConfigSet.load_from_file(CONSTANTS.CONFIG_FILE)
+        legacy_config = {**file_config, **os.environ}
         legacy_permissions = permissions_from_legacy_public_flags(legacy_config)
         if legacy_permissions:
             config_data["PERMISSIONS"] = legacy_permissions
@@ -1187,7 +1212,8 @@ def get_config(
             },
         )
         if not crawl_config_base:
-            file_config = BaseConfigSet.load_from_file(CONSTANTS.CONFIG_FILE)
+            if file_config is None:
+                file_config = BaseConfigSet.load_from_file(CONSTANTS.CONFIG_FILE)
             explicit_plugin_enabled_keys.update(_explicit_plugin_enabled_keys(file_config))
             plugin_user_config = {
                 **_plugin_user_config(_plugin_input_config(file_config)),
@@ -1223,28 +1249,7 @@ def get_config(
             for enabled_key in _plugin_enabled_config_keys().values():
                 config_data.pop(enabled_key, None)
 
-    # Decode JSON-encoded complex values (dict/list fields) that came from
-    # string-only sources before validation. ``IniConfigSettingsSource`` does
-    # this for the ArchiveBox.conf path, but Machine.config (mirrored from the
-    # INI via ``_coerce_to_str_dict``) and plugin/env scope overrides bypass
-    # pydantic-settings sources entirely — they feed JSON strings directly
-    # into ``model_validate``, which rejects ``"{...}"`` for a ``dict[str, str]``
-    # field. Run pydantic-settings' own complex-value decoder here so every
-    # source converges on the same shape before validation.
-    _complex_decoder = IniConfigSettingsSource(ArchiveBoxConfig)
-    for _field_name, _field in ArchiveBoxConfig.model_fields.items():
-        if _field_name not in config_data:
-            continue
-        _raw = config_data[_field_name]
-        if not isinstance(_raw, str) or not _raw:
-            continue
-        if _complex_decoder.field_is_complex(_field):
-            config_data[_field_name] = _complex_decoder.prepare_field_value(
-                _field_name,
-                _field,
-                _raw,
-                True,
-            )
+    config_data = decode_config_inputs(ArchiveBoxConfig, config_data)
 
     config = ArchiveBoxConfig.model_validate(config_data)
     if config.SERVER_SECURITY_MODE == "auto":
@@ -1261,7 +1266,6 @@ def get_config(
             value = config[key]
             if is_sensitive_config_key(key) and value not in (None, ""):
                 setattr(config, key, SENSITIVE_CONFIG_VALUE_REDACTED)
-    os.environ["ABXPKG_LIB_DIR"] = str(config.ABXPKG_LIB_DIR)
     archiving_warning_key = (config.TIMEOUT, config.USE_COLOR)
     if archiving_warning_key not in _WARNED_ARCHIVING_CONFIGS:
         config.warn_if_invalid()
@@ -1271,13 +1275,14 @@ def get_config(
 
 def get_all_configs() -> dict[str, BaseConfigSet]:
     """Get all config section objects as a dictionary."""
+    resolved = ArchiveBoxSourceSettings().model_dump(mode="json")
     return {
-        "SHELL_CONFIG": ShellConfig(),
-        "STORAGE_CONFIG": StorageConfig(),
-        "GENERAL_CONFIG": GeneralConfig(),
-        "SERVER_CONFIG": ServerConfig(),
-        "DATABASE_CONFIG": DatabaseConfig(),
-        "ARCHIVING_CONFIG": ArchivingConfig(),
-        "SEARCH_BACKEND_CONFIG": SearchBackendConfig(),
-        "LDAP_CONFIG": LDAPConfig(),
+        "SHELL_CONFIG": ShellConfig.model_validate(resolved),
+        "STORAGE_CONFIG": StorageConfig.model_validate(resolved),
+        "GENERAL_CONFIG": GeneralConfig.model_validate(resolved),
+        "SERVER_CONFIG": ServerConfig.model_validate(resolved),
+        "DATABASE_CONFIG": DatabaseConfig.model_validate(resolved),
+        "ARCHIVING_CONFIG": ArchivingConfig.model_validate(resolved),
+        "SEARCH_BACKEND_CONFIG": SearchBackendConfig.model_validate(resolved),
+        "LDAP_CONFIG": LDAPConfig.model_validate(resolved),
     }
