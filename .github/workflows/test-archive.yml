@@ -41,24 +41,38 @@ jobs:
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
+          if [ -z "$YOUTUBE_COOKIES" ]; then
+            echo "No YOUTUBE_COOKIES secret set; yt-dlp cookies will not be available"
+            exit 1
+          fi
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
           chmod 600 "$RUNNER_TEMP/cookies.txt"
 
-      - name: Run ArchiveBox
+      - name: Create archive and capture URL (with YouTube / yt-dlp enabled)
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/archive"
+
+          # initialize collection (creates /data layout)
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            init --install
+            init
+
+          # run add with cookies mounted and yt-dlp enabled.
+          # The container will see cookies at /tmp/cookies.txt (read-only).
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
             -e YTDLP_ENABLED=true \
             -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-            -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
             my-archivebox \
             add "${{ inputs.url }}"
 
+      - name: Remove temporary cookies
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cookies.txt"
+          
       - name: Exact ArchiveBox Static Export Method
         run: |
           docker run --rm \
@@ -108,11 +122,6 @@ jobs:
       - name: Show result
         run: |
           find public -maxdepth 4 -type f | sort
-          
-      - name: Remove temporary cookies
-        if: always()
-        run: |
-          rm -f "$RUNNER_TEMP/cookies.txt"
           
       - name: Generate Unforgeable Metadata File
         id: metadata
