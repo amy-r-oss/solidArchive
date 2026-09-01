@@ -51,20 +51,18 @@ jobs:
       - name: Create archive and capture URL (with YouTube / yt-dlp enabled)
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
-
           # initialize collection (creates /data layout)
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init
-
-          # run add with cookies mounted and yt-dlp enabled.
-          # The container will see cookies at /tmp/cookies.txt (read-only).
+          # run add with cookies mounted, yt-dlp enabled, and remote patch variables.
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
             -e YTDLP_ENABLED=true \
             -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
             my-archivebox \
             add "${{ inputs.url }}"
 
