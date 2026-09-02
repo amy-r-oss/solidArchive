@@ -187,39 +187,40 @@ jobs:
         run: |
           # This stamps only the single zip archive, creating archivebox-backup.zip.ots
           ots stamp archivebox-backup.zip
-      - name: Upload to Google Drive using rclone
-        env:
-          RCLONE_TOKEN: ${{ secrets.RCLONE_TOKEN }}
-          FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-        run: |
-          # 1. Update package list and install rclone natively
-          sudo apt-get update
-          sudo apt-get install -y rclone
           
-          # 2. Configure rclone for user token auth using env variables
-          export RCLONE_CONFIG_MYDRIVE_TYPE=drive
-          export RCLONE_CONFIG_MYDRIVE_SCOPE=drive
-          export RCLONE_CONFIG_MYDRIVE_TOKEN="$RCLONE_TOKEN"
-          export RCLONE_CONFIG_MYDRIVE_ROOT_FOLDER_ID="$FOLDER_ID"
+      # - name: Upload to Google Drive using rclone
+      #   env:
+      #     RCLONE_TOKEN: ${{ secrets.RCLONE_TOKEN }}
+      #     FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      #   run: |
+      #     # 1. Update package list and install rclone natively
+      #     sudo apt-get update
+      #     sudo apt-get install -y rclone
           
-          # 3. Upload files natively using optimized flags for Google Drive
-          rclone copy archivebox-backup.zip mydrive: \
-          --drive-acknowledge-abuse \
-          --drive-chunk-size 128M \
-          --bwlimit 8M \
-          --tpslimit 2 \
-          --retries 3 \
-          --low-level-retries 10 \
-          --timeout 10m \
-          --verbose
+      #     # 2. Configure rclone for user token auth using env variables
+      #     export RCLONE_CONFIG_MYDRIVE_TYPE=drive
+      #     export RCLONE_CONFIG_MYDRIVE_SCOPE=drive
+      #     export RCLONE_CONFIG_MYDRIVE_TOKEN="$RCLONE_TOKEN"
+      #     export RCLONE_CONFIG_MYDRIVE_ROOT_FOLDER_ID="$FOLDER_ID"
+          
+      #     # 3. Upload files natively using optimized flags for Google Drive
+      #     rclone copy archivebox-backup.zip mydrive: \
+      #     --drive-acknowledge-abuse \
+      #     --drive-chunk-size 128M \
+      #     --bwlimit 8M \
+      #     --tpslimit 2 \
+      #     --retries 3 \
+      #     --low-level-retries 10 \
+      #     --timeout 10m \
+      #     --verbose
             
-          rclone copy archivebox-backup.zip.ots mydrive: \
-            --drive-acknowledge-abuse \
-            --drive-chunk-size 64M \
-            --tpslimit 1 \
-            --timeout 5m \
-            --contimeout 2m \
-            --verbose
+      #     rclone copy archivebox-backup.zip.ots mydrive: \
+      #       --drive-acknowledge-abuse \
+      #       --drive-chunk-size 64M \
+      #       --tpslimit 1 \
+      #       --timeout 5m \
+      #       --contimeout 2m \
+      #       --verbose
 
 
       - name: Upload Static Download Artifact
