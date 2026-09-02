@@ -138,41 +138,41 @@ jobs:
         run: |
           find public -maxdepth 4 -type f | sort
           
-      - name: Generate Unforgeable Metadata File
-        id: metadata
-        run: |
-          cd "$GITHUB_WORKSPACE/public"
-          # 1. Fetch GitHub's cryptographically signed runtime token
-          # This token contains the repository, workflow name, and commit SHA signed by GitHub.
-          ACTIONS_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=openssl-tsa" | jq -r '.value')
+      # - name: Generate Unforgeable Metadata File
+      #   id: metadata
+      #   run: |
+      #     cd "$GITHUB_WORKSPACE/public"
+      #     # 1. Fetch GitHub's cryptographically signed runtime token
+      #     # This token contains the repository, workflow name, and commit SHA signed by GitHub.
+      #     ACTIONS_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+      #       "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=openssl-tsa" | jq -r '.value')
           
-          # 2. Write the human-readable text details you requested
-          echo "=== IMMUTABLE FILE PROOF ===" > "$GITHUB_WORKSPACE/public/proof.txt"
-          echo "Repository: ${{ github.repository }}" >> "$GITHUB_WORKSPACE/public/proof.txt"
-          echo "Workflow File: test.yaml" >> "$GITHUB_WORKSPACE/public/proof.txt"
-          echo "Git Commit Version: ${{ github.sha }}" >> "$GITHUB_WORKSPACE/public/proof.txt"
-          echo "Execution Date/Time: $(date -u '停%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_WORKSPACE/public/proof.txt"
-          echo "GitHub Cryptographic Token (JWT): $ACTIONS_TOKEN" >> "$GITHUB_WORKSPACE/public/proof.txt"
+      #     # 2. Write the human-readable text details you requested
+      #     echo "=== IMMUTABLE FILE PROOF ===" > "$GITHUB_WORKSPACE/public/proof.txt"
+      #     echo "Repository: ${{ github.repository }}" >> "$GITHUB_WORKSPACE/public/proof.txt"
+      #     echo "Workflow File: test.yaml" >> "$GITHUB_WORKSPACE/public/proof.txt"
+      #     echo "Git Commit Version: ${{ github.sha }}" >> "$GITHUB_WORKSPACE/public/proof.txt"
+      #     echo "Execution Date/Time: $(date -u '停%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_WORKSPACE/public/proof.txt"
+      #     echo "GitHub Cryptographic Token (JWT): $ACTIONS_TOKEN" >> "$GITHUB_WORKSPACE/public/proof.txt"
  
       - name: Create Zip Archive
         run: |
           # Compress the entire public/ folder into a single archive file
           zip -r archivebox-backup.zip public/
           
-      - name: Cryptographically Lock and Timestamp the Proof
-        run: |
-          # 1. Generate an RFC 3161 Timestamp request file (.tsq)
-          openssl ts -query -data "$GITHUB_WORKSPACE/public/proof.txt" -sha256 -cert -out "$GITHUB_WORKSPACE/public/proof.tsq"
+      # - name: Cryptographically Lock and Timestamp the Proof
+      #   run: |
+      #     # 1. Generate an RFC 3161 Timestamp request file (.tsq)
+      #     openssl ts -query -data "$GITHUB_WORKSPACE/public/proof.txt" -sha256 -cert -out "$GITHUB_WORKSPACE/public/proof.tsq"
           
-          # 2. Submit the .tsq file to DigiCert's actual RFC 3161 server endpoint
-          curl -s -H "Content-Type: application/timestamp-query" \
-               --data-binary @"$GITHUB_WORKSPACE/public/proof.tsq" \
-               http://timestamp.digicert.com > "$GITHUB_WORKSPACE/public/proof.tsr"
+      #     # 2. Submit the .tsq file to DigiCert's actual RFC 3161 server endpoint
+      #     curl -s -H "Content-Type: application/timestamp-query" \
+      #          --data-binary @"$GITHUB_WORKSPACE/public/proof.tsq" \
+      #          http://timestamp.digicert.com > "$GITHUB_WORKSPACE/public/proof.tsr"
 
 
-          # Clean up temporary files, leaving only the proof and the third-party validation stamp
-          # rm proof.tsq
+      #     # Clean up temporary files, leaving only the proof and the third-party validation stamp
+      #     # rm proof.tsq
           
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -183,10 +183,10 @@ jobs:
         run: |
           pip install opentimestamps-client
       
-      - name: Timestamp the Zip Archive
-        run: |
-          # This stamps only the single zip archive, creating archivebox-backup.zip.ots
-          ots stamp archivebox-backup.zip
+      # - name: Timestamp the Zip Archive
+      #   run: |
+      #     # This stamps only the single zip archive, creating archivebox-backup.zip.ots
+      #     ots stamp archivebox-backup.zip
           
       # - name: Upload to Google Drive using rclone
       #   env:
