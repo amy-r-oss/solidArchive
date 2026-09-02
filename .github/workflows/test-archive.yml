@@ -204,12 +204,14 @@ jobs:
           
           # 3. Upload files natively using optimized flags for Google Drive
           rclone copy archivebox-backup.zip mydrive: \
-            --drive-acknowledge-abuse \
-            --drive-chunk-size 64M \
-            --tpslimit 1 \
-            --timeout 5m \
-            --contimeout 2m \
-            --verbose
+          --drive-acknowledge-abuse \
+          --drive-chunk-size 128M \
+          --bwlimit 8M \
+          --tpslimit 2 \
+          --retries 3 \
+          --low-level-retries 10 \
+          --timeout 10m \
+          --verbose
             
           rclone copy archivebox-backup.zip.ots mydrive: \
             --drive-acknowledge-abuse \
