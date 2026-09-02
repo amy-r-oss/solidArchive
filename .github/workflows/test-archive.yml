@@ -68,15 +68,15 @@ jobs:
             fi
             echo "Adding: $url"
             
-          # run add with cookies mounted and yt-dlp enabled.
-          # The container will see cookies at /tmp/cookies.txt (read-only).
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            -e YTDLP_ENABLED=true \
-            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-            my-archivebox \
-            add "url"
+            # run add with cookies mounted and yt-dlp enabled.
+            # The container will see cookies at /tmp/cookies.txt (read-only).
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE/archive:/data" \
+              -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+              -e YTDLP_ENABLED=true \
+              -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+              my-archivebox \
+              add "url"
           done
 
       - name: Remove temporary cookies
