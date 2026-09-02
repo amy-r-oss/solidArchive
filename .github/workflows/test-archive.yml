@@ -40,7 +40,7 @@ jobs:
           echo "URLs to archive:"
           sed -n '1,200p' "$GITHUB_WORKSPACE/archive/urls.txt" || true
 
-           - name: Initialize collection (safely) and add URLs
+      - name: Initialize collection (safely) and add URLs
         run: |
           # Detect DB files that indicate ArchiveBox is initialized
           if [ -f "$GITHUB_WORKSPACE/archive/index.sqlite3" ] || [ -f "$GITHUB_WORKSPACE/archive/db.sqlite3" ]; then
