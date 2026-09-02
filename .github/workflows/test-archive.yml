@@ -4,16 +4,24 @@ on:
   workflow_dispatch:
     inputs:
       urls:
-        description: "Newline-separated URLs to archive (optional). If empty, 'url' will be used."
-        required: false
+        description: "One or more URLs to archive (separate multiple URLs with newline or comma)"
+        required: true
         type: string
-      url:
-        description: "Single URL (optional). Used only if 'urls' is empty."
-        required: false
-        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
   archive:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
 
     steps:
@@ -24,65 +32,216 @@ jobs:
         run: |
           docker build -t my-archivebox .
 
-      - name: Prepare URLs file for ArchiveBox
+      - name: Create archive directories
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
-          if [ -n "${{ inputs.urls }}" ]; then
-            printf '%s\n' "${{ inputs.urls }}" > "$GITHUB_WORKSPACE/archive/urls.txt"
-            echo "Wrote urls from 'urls' input to archive/urls.txt"
-          elif [ -n "${{ inputs.url }}" ]; then
-            printf '%s\n' "${{ inputs.url }}" > "$GITHUB_WORKSPACE/archive/urls.txt"
-            echo "Wrote single url from 'url' input to archive/urls.txt"
-          else
-            echo "Error: no URLs provided. Set either 'urls' (multiline) or 'url'." >&2
+          mkdir -p "$GITHUB_WORKSPACE/public"
+
+      - name: Create temporary YouTube cookies
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -z "$YOUTUBE_COOKIES" ]; then
+            echo "No YOUTUBE_COOKIES secret set; yt-dlp cookies will not be available"
             exit 1
           fi
-          echo "URLs to archive:"
-          sed -n '1,200p' "$GITHUB_WORKSPACE/archive/urls.txt" || true
+          printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
+          chmod 600 "$RUNNER_TEMP/cookies.txt"
 
-      - name: Initialize collection and add URLs
+      - name: Create archive and capture URL (with YouTube / yt-dlp enabled)
+        env:
+         URLS_INPUT: ${{ inputs.urls }}
+        run: |
+         mkdir -p "$GITHUB_WORKSPACE/archive"
+    
+         # initialize collection (creates /data layout)
+         docker run --rm \
+           -v "$GITHUB_WORKSPACE/archive:/data" \
+           my-archivebox \
+           init
+           
+         echo "URLs input:"
+         echo "$URLS_INPUT"
+         
+         # normalize input: replace commas with newlines, remove empty lines, then add each URL
+         echo "$URLS_INPUT" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | while IFS= read -r url; do
+           url="$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+           if [ -z "$url" ]; then
+             continue
+           fi
+           echo "Adding: $url"
+           
+           # run add with cookies mounted, yt-dlp enabled, and remote patch variables.
+           docker run --rm \
+             -v "$GITHUB_WORKSPACE/archive:/data" \
+             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+             -e YTDLP_ENABLED=true \
+             -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+             -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
+             my-archivebox \
+             add "$url"
+         done
+
+
+      - name: Remove temporary cookies
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cookies.txt"
+          
+      - name: Exact ArchiveBox Static Export Method
         run: |
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            init 
-
-          # Add all URLs from the file in the mounted collection dir.
+            config --set BASE_URL="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/archive"
+          
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
-            add /data/urls.txt
+            list --html --with-headers > "$GITHUB_WORKSPACE/archive/index.html"
+          
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            my-archivebox \
+            list --json --with-headers > "$GITHUB_WORKSPACE/archive/index.json"
 
-      - name: Generate static index (HTML + JSON) in output_static
+      - name: Prepare Folder Structural Routing
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE/archive:/data" my-archivebox bash -lc '
-            set -euo pipefail
-            mkdir -p /data/output_static
-            # Create static HTML and JSON indexes per ArchiveBox docs
-            archivebox list --html --with-headers > /data/output_static/index.html
-            archivebox list --json --with-headers > /data/output_static/index.json
-            # Prevent GitHub Pages from running Jekyll on the site root
-            touch /data/output_static/.nojekyll
-            # sanity
-            echo "Generated:"
-            ls -l /data/output_static/index.* || true
-          '
+          mkdir -p "$GITHUB_WORKSPACE/public"
+          cp "$GITHUB_WORKSPACE/archive/index.html" "$GITHUB_WORKSPACE/public/"
+          cp "$GITHUB_WORKSPACE/archive/index.json" "$GITHUB_WORKSPACE/public/"
+          
+          if [ -d "$GITHUB_WORKSPACE/archive/archive" ]; then 
+            cp -r "$GITHUB_WORKSPACE/archive/archive" "$GITHUB_WORKSPACE/public/"
+          fi
 
-      - name: Show result (sample)
+      - name: View All Folders and Archived URLs
         run: |
-          echo "=== Sample files in archive/ (top levels) ==="
-          find archive -maxdepth 2 -type d -print | sed -n '1,200p' || true
-          echo "=== output_static contents ==="
-          find archive/output_static -maxdepth 2 -type f -print || true
+          echo "============================================="
+          echo "📂 DEPLOYMENT DIRECTORY STRUCTURE"
+          echo "============================================="
+          find "$GITHUB_WORKSPACE/public" -maxdepth 6 -type d | sort
+          echo ""
+          echo "================================================================="
+          echo "📄 ALL UPLOADED WEB PAGES (.HTML)"
+          echo "================================================================="
+          cd "$GITHUB_WORKSPACE/public"
+          
+          find . -type f -name "*.html" | sort | while read -r file_path; do
+            clean_path=$(echo "$file_path" | sed 's|^\./||')
+            echo "Page: $clean_path"
+            echo "Link: $BASE_URL/$clean_path"
+            echo "-----------------------------------------------------------------"
+          done
 
-      - name: Upload static output (HTML + JSON) artifact
+      - name: Show result
+        run: |
+          find public -maxdepth 4 -type f | sort
+          
+      - name: Generate Unforgeable Metadata File
+        id: metadata
+        run: |
+          cd "$GITHUB_WORKSPACE/public"
+          # 1. Fetch GitHub's cryptographically signed runtime token
+          # This token contains the repository, workflow name, and commit SHA signed by GitHub.
+          ACTIONS_TOKEN=$(curl -s -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=openssl-tsa" | jq -r '.value')
+          
+          # 2. Write the human-readable text details you requested
+          echo "=== IMMUTABLE FILE PROOF ===" > "$GITHUB_WORKSPACE/public/proof.txt"
+          echo "Repository: ${{ github.repository }}" >> "$GITHUB_WORKSPACE/public/proof.txt"
+          echo "Workflow File: test.yaml" >> "$GITHUB_WORKSPACE/public/proof.txt"
+          echo "Git Commit Version: ${{ github.sha }}" >> "$GITHUB_WORKSPACE/public/proof.txt"
+          echo "Execution Date/Time: $(date -u '停%Y-%m-%d %H:%M:%S UTC')" >> "$GITHUB_WORKSPACE/public/proof.txt"
+          echo "GitHub Cryptographic Token (JWT): $ACTIONS_TOKEN" >> "$GITHUB_WORKSPACE/public/proof.txt"
+ 
+      - name: Create Zip Archive
+        run: |
+          # Compress the entire public/ folder into a single archive file
+          zip -r archivebox-backup.zip public/
+          
+      - name: Cryptographically Lock and Timestamp the Proof
+        run: |
+          # 1. Generate an RFC 3161 Timestamp request file (.tsq)
+          openssl ts -query -data "$GITHUB_WORKSPACE/public/proof.txt" -sha256 -cert -out "$GITHUB_WORKSPACE/public/proof.tsq"
+          
+          # 2. Submit the .tsq file to DigiCert's actual RFC 3161 server endpoint
+          curl -s -H "Content-Type: application/timestamp-query" \
+               --data-binary @"$GITHUB_WORKSPACE/public/proof.tsq" \
+               http://timestamp.digicert.com > "$GITHUB_WORKSPACE/public/proof.tsr"
+
+
+          # Clean up temporary files, leaving only the proof and the third-party validation stamp
+          # rm proof.tsq
+          
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      
+      - name: Install OpenTimestamps CLI
+        run: |
+          pip install opentimestamps-client
+      
+      - name: Timestamp the Zip Archive
+        run: |
+          # This stamps only the single zip archive, creating archivebox-backup.zip.ots
+          ots stamp archivebox-backup.zip
+      - name: Upload to Google Drive using rclone
+        env:
+          RCLONE_TOKEN: ${{ secrets.RCLONE_TOKEN }}
+          FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        run: |
+          # 1. Update package list and install rclone natively
+          sudo apt-get update
+          sudo apt-get install -y rclone
+          
+          # 2. Configure rclone for user token auth using env variables
+          export RCLONE_CONFIG_MYDRIVE_TYPE=drive
+          export RCLONE_CONFIG_MYDRIVE_SCOPE=drive
+          export RCLONE_CONFIG_MYDRIVE_TOKEN="$RCLONE_TOKEN"
+          export RCLONE_CONFIG_MYDRIVE_ROOT_FOLDER_ID="$FOLDER_ID"
+          
+          # 3. Upload files natively using optimized flags for Google Drive
+          rclone copy archivebox-backup.zip mydrive: \
+            --drive-acknowledge-abuse \
+            --drive-chunk-size 64M \
+            --tpslimit 1 \
+            --timeout 5m \
+            --contimeout 2m \
+            --verbose
+            
+          rclone copy archivebox-backup.zip.ots mydrive: \
+            --drive-acknowledge-abuse \
+            --drive-chunk-size 64M \
+            --tpslimit 1 \
+            --timeout 5m \
+            --contimeout 2m \
+            --verbose
+
+
+      - name: Upload Static Download Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: archive-static-output
-          path: archive/output_static
+          name: archive-static-download-folder
+          path: public/
+          retention-days: 90
 
-      - name: Upload complete ArchiveBox output (for debugging)
+      - name: Upload OpenTimeStamp files as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: archive-test-output
-          path: archive/
+          name: archive-ots-proof
+          path: |
+            archive-*.tar.gz
+            archive-*.tar.gz.ots
+            ots-verification/
+          retention-days: 90
+
+      - name: Upload GitHub Pages Target Build
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
