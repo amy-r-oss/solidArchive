@@ -40,14 +40,38 @@ jobs:
           echo "URLs to archive:"
           sed -n '1,200p' "$GITHUB_WORKSPACE/archive/urls.txt" || true
 
-      - name: Initialize collection and add URLs
+           - name: Initialize collection (safely) and add URLs
         run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE/archive:/data" \
-            my-archivebox \
-            init --install
+          # Detect DB files that indicate ArchiveBox is initialized
+          if [ -f "$GITHUB_WORKSPACE/archive/index.sqlite3" ] || [ -f "$GITHUB_WORKSPACE/archive/db.sqlite3" ]; then
+            echo "ArchiveBox DB found; skipping init."
+          else
+            # If the archive dir is empty, do full init + install
+            if [ -z "$(ls -A "$GITHUB_WORKSPACE/archive")" ]; then
+              echo "Archive dir empty → running init --install (first-time setup)"
+              docker run --rm \
+                -v "$GITHUB_WORKSPACE/archive:/data" \
+                -w /data \
+                my-archivebox \
+                init --install
+            else
+              # Non-empty dir but no DB: run init (pick up existing files)
+              echo "Archive dir contains files but no DB → running init to pick up existing collection"
+              docker run --rm \
+                -v "$GITHUB_WORKSPACE/archive:/data" \
+                -w /data \
+                my-archivebox \
+                init
+            fi
+          fi
 
-          # Add all URLs from the file in the mounted collection dir.
+          # Add all URLs from the prepared urls.txt file (must exist)
+          if [ ! -f "$GITHUB_WORKSPACE/archive/urls.txt" ]; then
+            echo "ERROR: urls.txt not found in archive/ — make sure the Prepare URLs step wrote it" >&2
+            exit 1
+          fi
+
+          echo "Adding URLs from archive/urls.txt ..."
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
