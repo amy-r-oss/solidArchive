@@ -2,25 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import os
-import re
-import signal
 import sys
 import time
-from collections import defaultdict
-from collections.abc import Iterable
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from asgiref.sync import sync_to_async
-from django.db import IntegrityError
 from django.utils import timezone
 
-from abx_dl.events import PROCESS_EXIT_SKIPPED, ArchiveResultEvent, ProcessCompletedEvent, ProcessStartedEvent, SnapshotEvent
-from abx_dl.output_files import guess_mimetype
+from abx_dl.events import ArchiveResultEvent, ProcessStartedEvent
+from abx_dl.output_files import OutputManifest
 from abx_dl.services.base import BaseService
 
 from .process_service import parse_event_datetime
@@ -72,140 +66,21 @@ def _perf_span(label: str):
         print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
 
 
-@runtime_checkable
-class ModelDumpable(Protocol):
-    def model_dump(self) -> dict[str, Any]: ...
-
-
-def _collect_output_metadata(plugin_dir: Path) -> tuple[dict[str, dict], int, str]:
-    exclude_names = {"stdout.log", "stderr.log", "process.pid", "hook.pid", "listener.pid"}
-    output_files: dict[str, dict] = {}
-    mime_sizes: dict[str, int] = defaultdict(int)
-    total_size = 0
-
-    if not plugin_dir.exists():
-        return output_files, total_size, ""
-
-    for file_path in plugin_dir.rglob("*"):
-        if not file_path.is_file():
-            continue
-        if ".hooks" in file_path.parts:
-            continue
-        if file_path.name in exclude_names:
-            continue
-        try:
-            stat = file_path.stat()
-        except OSError:
-            continue
-        mime_type = guess_mimetype(file_path) or "application/octet-stream"
-        relative_path = str(file_path.relative_to(plugin_dir))
-        output_files[relative_path] = {
-            "extension": file_path.suffix.lower().lstrip("."),
-            "mimetype": mime_type,
-            "size": stat.st_size,
-        }
-        mime_sizes[mime_type] += stat.st_size
-        total_size += stat.st_size
-
-    output_mimetypes = ",".join(mime for mime, _size in sorted(mime_sizes.items(), key=lambda item: item[1], reverse=True))
-    return output_files, total_size, output_mimetypes
-
-
-def _coerce_output_file_size(value: Any) -> int:
-    try:
-        return max(int(value or 0), 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _normalize_output_files(raw_output_files: Any) -> dict[str, dict]:
-    def _enrich_metadata(path: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        normalized = dict(metadata)
-        if "extension" not in normalized:
-            normalized["extension"] = Path(path).suffix.lower().lstrip(".")
-        if "mimetype" not in normalized:
-            guessed = guess_mimetype(path)
-            if guessed:
-                normalized["mimetype"] = guessed
-        return normalized
-
-    if raw_output_files is None:
-        return {}
-
-    if isinstance(raw_output_files, str):
-        try:
-            raw_output_files = json.loads(raw_output_files)
-        except json.JSONDecodeError:
-            return {}
-
-    if isinstance(raw_output_files, dict):
-        normalized: dict[str, dict] = {}
-        for path, metadata in raw_output_files.items():
-            if not path:
-                continue
-            metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
-            metadata_dict.pop("path", None)
-            normalized[str(path)] = _enrich_metadata(str(path), metadata_dict)
-        return normalized
-
-    if not isinstance(raw_output_files, Iterable):
-        return {}
-
-    normalized: dict[str, dict] = {}
-    for item in raw_output_files:
-        if isinstance(item, str):
-            normalized[item] = _enrich_metadata(item, {})
-            continue
-        if isinstance(item, ModelDumpable):
-            item = item.model_dump()
-        if not isinstance(item, dict):
-            continue
-        path = str(item.get("path") or "").strip()
-        if not path:
-            continue
-        normalized[path] = _enrich_metadata(path, {key: value for key, value in item.items() if key != "path" and value not in (None, "")})
-
-    return normalized
-
-
-def _has_structured_output_metadata(output_files: dict[str, dict]) -> bool:
-    return any(any(key in metadata for key in ("extension", "mimetype", "size")) for metadata in output_files.values())
-
-
-def _summarize_output_files(output_files: dict[str, dict]) -> tuple[int, str]:
-    mime_sizes: dict[str, int] = defaultdict(int)
-    total_size = 0
-
-    for metadata in output_files.values():
-        if not isinstance(metadata, dict):
-            continue
-        size = _coerce_output_file_size(metadata.get("size"))
-        mimetype = str(metadata.get("mimetype") or "").strip()
-        total_size += size
-        if mimetype and size:
-            mime_sizes[mimetype] += size
-
-    output_mimetypes = ",".join(mime for mime, _size in sorted(mime_sizes.items(), key=lambda item: item[1], reverse=True))
-    return total_size, output_mimetypes
+def _manifest_metadata(manifest: OutputManifest) -> tuple[dict[str, dict], int, str]:
+    return manifest.as_mapping(), manifest.total_size, ",".join(manifest.mimetypes)
 
 
 def _resolve_output_metadata(raw_output_files: Any, plugin_dir: Path) -> tuple[dict[str, dict], int, str]:
-    normalized_output_files = _normalize_output_files(raw_output_files)
-    if normalized_output_files and _has_structured_output_metadata(normalized_output_files):
-        output_size, output_mimetypes = _summarize_output_files(normalized_output_files)
-        return normalized_output_files, output_size, output_mimetypes
-    return _collect_output_metadata(plugin_dir)
+    manifest = OutputManifest.from_value(raw_output_files)
+    if manifest.files and any(output_file.size for output_file in manifest.files):
+        return _manifest_metadata(manifest)
+    return _manifest_metadata(OutputManifest.scan(plugin_dir, containment_root=plugin_dir.parent))
 
 
 def _normalize_status(status: str) -> str:
     if status == "noresult":
         return "noresults"
     return status or "failed"
-
-
-def _snapshot_hook_order(hook_name: str) -> int:
-    match = re.match(r"^on_Snapshot__(\d+)", hook_name or "")
-    return int(match.group(1)) if match else -1
 
 
 def _normalize_snapshot_title(candidate: str, *, snapshot_url: str) -> str:
@@ -242,37 +117,6 @@ def _should_update_snapshot_title(current_title: str, next_title: str, *, snapsh
     if not current or current.lower() == "pending..." or current == snapshot_url:
         return True
     return len(next_title) > len(current)
-
-
-def _status_for_process_without_archive_result(event: ProcessCompletedEvent) -> str:
-    if event.exit_code == PROCESS_EXIT_SKIPPED:
-        return "skipped"
-    if event.exit_code in {128 + signal.SIGHUP, 128 + signal.SIGINT, 128 + signal.SIGTERM}:
-        # This fallback only runs when a snapshot hook exited before emitting a
-        # structured ArchiveResult. A polite shutdown signal means the runner
-        # was interrupted during ownership transfer, not that the extractor
-        # produced a durable negative result. Keep the hook queued so the next
-        # runner can retry the exact work item instead of sealing in a transient
-        # process-lifecycle failure.
-        return "queued"
-    if event.exit_code != 0:
-        return "failed"
-    return "noresults"
-
-
-def _iter_archiveresult_records(stdout: str) -> list[dict]:
-    records: list[dict] = []
-    for raw_line in stdout.splitlines():
-        line = raw_line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if record.get("type") == "ArchiveResult":
-            records.append(record)
-    return records
 
 
 @_perf_trace("archivebox.ArchiveResultService._save_archiveresult_event_sync")
@@ -325,7 +169,6 @@ def _save_archiveresult_event_to_db(
         start_ts = parse_event_datetime(event.start_ts)
         end_ts = parse_event_datetime(event.end_ts) or timezone.now()
         defaults = {
-            "hook_name": event.hook_name,
             "status": _normalize_status(event.status),
             "output_str": event.output_str,
             "output_json": event.output_json,
@@ -340,47 +183,13 @@ def _save_archiveresult_event_to_db(
         if event.error:
             defaults["notes"] = event.error
 
-    with _perf_span("archivebox.ArchiveResultService.on_ArchiveResultEvent.result_lookup"):
-        result = ArchiveResult.objects.filter(
-            snapshot=snapshot,
-            plugin=event.plugin,
-        ).first()
-    if result is None:
-        try:
-            with _perf_span("archivebox.ArchiveResultService.on_ArchiveResultEvent.result_create"):
-                result = ArchiveResult.objects.create(
-                    snapshot=snapshot,
-                    plugin=event.plugin,
-                    **defaults,
-                )
-        except IntegrityError:
-            with _perf_span("archivebox.ArchiveResultService.on_ArchiveResultEvent.result_get_after_integrity"):
-                result = ArchiveResult.objects.get(
-                    snapshot=snapshot,
-                    plugin=event.plugin,
-                )
-
-    if result.output_files:
-        merged_output_files = {**result.output_files, **defaults["output_files"]}
-        defaults["output_files"] = merged_output_files
-        defaults["output_size"], defaults["output_mimetypes"] = _summarize_output_files(merged_output_files)
-        defaults["output_size"] = max(defaults["output_size"], int(result.output_size or 0))
-        defaults["output_mimetypes"] = ",".join(
-            dict.fromkeys(
-                mimetype.strip()
-                for value in (defaults["output_mimetypes"], result.output_mimetypes)
-                for mimetype in value.split(",")
-                if mimetype.strip()
-            ),
+    with _perf_span("archivebox.ArchiveResultService.on_ArchiveResultEvent.result_get_or_create"):
+        result, _created = ArchiveResult.get_or_create_by_hook(
+            snapshot,
+            event.plugin,
+            event.hook_name,
+            defaults=defaults,
         )
-    if result.start_ts and defaults["start_ts"]:
-        defaults["start_ts"] = min(result.start_ts, defaults["start_ts"])
-    if result.end_ts and defaults["end_ts"]:
-        defaults["end_ts"] = max(result.end_ts, defaults["end_ts"])
-    if _snapshot_hook_order(result.hook_name) > _snapshot_hook_order(event.hook_name):
-        for field in ("hook_name", "status", "output_str", "output_json", "process_id", "notes"):
-            if field in result.__dict__:
-                defaults[field] = result.__dict__[field]
 
     with _perf_span("archivebox.ArchiveResultService.on_ArchiveResultEvent.diff_fields"):
         update_fields = []
@@ -391,13 +200,6 @@ def _save_archiveresult_event_to_db(
     if update_fields:
         with _perf_span("archivebox.ArchiveResultService.on_ArchiveResultEvent.result_update"):
             result.save(update_fields=[*update_fields, "modified_at"])
-
-    if result.status == ArchiveResult.StatusChoices.QUEUED:
-        # ArchiveResult has no retry_at column. If a shutdown/takeover projects
-        # a killed hook back to QUEUED, wake the parent Snapshot/Crawl so the
-        # next runner retries that exact hook instead of waiting on a stale
-        # active-state lease.
-        snapshot.update_and_requeue(retry_at=timezone.now())
 
     if result.status in (ArchiveResult.StatusChoices.SUCCEEDED, ArchiveResult.StatusChoices.NORESULTS):
         with _perf_span("archivebox.ArchiveResultService.on_ArchiveResultEvent.title_update"):
@@ -422,36 +224,45 @@ def _save_archiveresult_event_to_db(
 
 
 def mark_archiveresult_started(event: ProcessStartedEvent, *, snapshot_id: str, process_id: str) -> None:
-    """Advance an existing queued plugin row after its OS process is persisted."""
-    from archivebox.core.models import ArchiveResult
+    """Project a running abx-dl hook after its OS process is persisted."""
+    from archivebox.core.models import ArchiveResult, Snapshot
 
     started_at = parse_event_datetime(event.start_ts)
     if started_at is None:
         raise ValueError("ProcessStartedEvent.start_ts is required")
-    ArchiveResult.objects.filter(
-        snapshot_id=snapshot_id,
-        plugin=event.plugin_name,
-        status=ArchiveResult.StatusChoices.QUEUED,
-    ).update(
-        hook_name=event.hook_name,
-        status=ArchiveResult.StatusChoices.STARTED,
-        start_ts=started_at,
-        end_ts=None,
-        process_id=process_id,
-        modified_at=timezone.now(),
+    snapshot = Snapshot.objects.filter(id=snapshot_id).first()
+    if snapshot is None:
+        return
+    result, _created = ArchiveResult.get_or_create_by_hook(
+        snapshot,
+        event.plugin_name,
+        event.hook_name,
+        defaults={
+            "status": ArchiveResult.StatusChoices.STARTED,
+            "start_ts": started_at,
+            "end_ts": None,
+            "process_id": process_id,
+        },
     )
+    if result.start_ts is not None and started_at <= result.start_ts:
+        return
+    result.status = ArchiveResult.StatusChoices.STARTED
+    result.start_ts = started_at
+    result.end_ts = None
+    result.process_id = process_id
+    result.save(update_fields=["status", "start_ts", "end_ts", "process_id", "modified_at"])
 
 
 class ArchiveResultService(BaseService):
-    LISTENS_TO = [ArchiveResultEvent, ProcessCompletedEvent]
+    """Project abx-dl ArchiveResult facts into Django models."""
+
+    LISTENS_TO = [ArchiveResultEvent]
     EMITS = []
 
     def __init__(self, bus):
-        self._completed_process_event_ids: set[str] = set()
-        self._save_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._save_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
         super().__init__(bus)
         self.bus.on(ArchiveResultEvent, self.on_ArchiveResultEvent__save_to_db)
-        self.bus.on(ProcessCompletedEvent, self.on_ProcessCompletedEvent__save_to_db)
 
     @_perf_trace("archivebox.ArchiveResultService.on_ArchiveResultEvent__save_to_db")
     async def on_ArchiveResultEvent__save_to_db(self, event: ArchiveResultEvent) -> None:
@@ -463,68 +274,7 @@ class ArchiveResultService(BaseService):
                 where=lambda candidate: self.bus.event_is_child_of(event, candidate),
             )
 
-        key = (str(event.snapshot_id), event.plugin)
+        key = (str(event.snapshot_id), event.plugin, event.hook_name)
         lock = self._save_locks.setdefault(key, asyncio.Lock())
         async with lock:
             await sync_to_async(_save_archiveresult_event_to_db, thread_sensitive=True)(event, process_started)
-
-    @_perf_trace("archivebox.ArchiveResultService.on_ProcessCompletedEvent__save_to_db")
-    async def on_ProcessCompletedEvent__save_to_db(self, event: ProcessCompletedEvent) -> None:
-        if event.event_id in self._completed_process_event_ids:
-            return
-        self._completed_process_event_ids.add(event.event_id)
-
-        if not event.hook_name.startswith("on_Snapshot"):
-            return
-        with _perf_span("archivebox.ArchiveResultService.on_ProcessCompletedEvent.find_snapshot_event"):
-            snapshot_event = await self.bus.find(
-                SnapshotEvent,
-                past=True,
-                future=False,
-                where=lambda candidate: self.bus.event_is_child_of(event, candidate),
-            )
-        if snapshot_event is None:
-            return
-
-        with _perf_span("archivebox.ArchiveResultService.on_ProcessCompletedEvent.parse_stdout_records"):
-            records = _iter_archiveresult_records(event.stdout)
-        if records:
-            if len(records) > 1:
-                raise RuntimeError(
-                    f"Hook {event.plugin_name}:{event.hook_name} emitted {len(records)} ArchiveResult records; expected exactly one",
-                )
-            for record in records:
-                record_status = _normalize_status(record.get("status") or "")
-                record_failed = record_status == "failed" or (not record_status and event.exit_code not in (0, PROCESS_EXIT_SKIPPED))
-                with _perf_span("archivebox.ArchiveResultService.on_ProcessCompletedEvent.emit_archive_result_record"):
-                    await event.emit(
-                        ArchiveResultEvent(
-                            snapshot_id=record.get("snapshot_id") or snapshot_event.snapshot_id,
-                            plugin=record.get("plugin") or event.plugin_name,
-                            hook_name=record.get("hook_name") or event.hook_name,
-                            status=record_status,
-                            output_str=record.get("output_str") or "",
-                            output_json=record.get("output_json") if isinstance(record.get("output_json"), dict) else None,
-                            output_files=event.output_files,
-                            start_ts=event.start_ts,
-                            end_ts=event.end_ts,
-                            error=record.get("error") or (event.stderr if record_failed else ""),
-                        ),
-                    ).now()
-            return
-
-        process_failed = _status_for_process_without_archive_result(event) == "failed"
-        with _perf_span("archivebox.ArchiveResultService.on_ProcessCompletedEvent.emit_archive_result_fallback"):
-            await event.emit(
-                ArchiveResultEvent(
-                    snapshot_id=snapshot_event.snapshot_id,
-                    plugin=event.plugin_name,
-                    hook_name=event.hook_name,
-                    status=_status_for_process_without_archive_result(event),
-                    output_str=event.stderr if process_failed else "",
-                    output_files=event.output_files,
-                    start_ts=event.start_ts,
-                    end_ts=event.end_ts,
-                    error=event.stderr if process_failed else "",
-                ),
-            ).now()

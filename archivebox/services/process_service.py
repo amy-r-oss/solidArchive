@@ -43,10 +43,10 @@ def normalize_process_env(env: dict) -> dict:
         if is_sensitive_config_key(key) or (key in config_input_names and key not in allowed_config_keys):
             normalized.pop(key, None)
     if selected_plugins:
-        from abx_dl.models import discover_plugins, filter_plugins
         from archivebox.config.common import _plugin_enabled_config_keys
+        from archivebox.plugins.discovery import get_plugin_catalog
 
-        selected_plugins = set(filter_plugins(discover_plugins(runtime="archivebox"), sorted(selected_plugins), include_providers=True))
+        selected_plugins = set(get_plugin_catalog().select(sorted(selected_plugins)))
         for plugin_name, enabled_key in _plugin_enabled_config_keys().items():
             normalized.setdefault(enabled_key, "True" if plugin_name in selected_plugins else "False")
     return normalized
@@ -100,6 +100,7 @@ class ProcessService(BaseService):
             process = await Process.objects.acreate(
                 machine=iface.machine,
                 iface=iface,
+                parent_id=None,
                 process_type=process_type,
                 worker_type=worker_type,
                 pwd=event.output_dir,
@@ -133,6 +134,7 @@ class ProcessService(BaseService):
             hook_path=event.hook_path,
         )
         await Process.objects.filter(id=process.id).aupdate(
+            parent_id=process.parent_id,
             pwd=process.pwd,
             cmd=process.cmd,
             env=process.env,
@@ -219,6 +221,7 @@ class ProcessService(BaseService):
             await Process.objects.acreate(
                 machine=iface.machine,
                 iface=iface,
+                parent_id=None,
                 process_type=process_type,
                 worker_type=worker_type,
                 pwd=event.output_dir,
@@ -239,6 +242,7 @@ class ProcessService(BaseService):
         updates = {
             "machine_id": iface.machine_id,
             "iface_id": iface.id,
+            "parent_id": process.parent_id,
             "pwd": event.output_dir,
             "env": process_env,
             "pid": event.pid or process.pid,

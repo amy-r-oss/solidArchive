@@ -6,7 +6,6 @@ __command__ = "archivebox add"
 
 import sys
 import os
-import json
 from pathlib import Path
 
 from typing import Any, TYPE_CHECKING
@@ -71,17 +70,7 @@ def add(
     created_by_id: int | None = None,
     config: dict[str, Any] | None = None,
 ) -> tuple[Crawl, QuerySet[Snapshot]]:
-    """Add a new URL or list of URLs to your archive.
-
-    The flow is:
-    1. Save URLs to sources file
-    2. Create Crawl with URLs and max_depth
-    3. Crawl runner creates Snapshots from Crawl URLs (depth=0)
-    4. Crawl runner runs parser extractors on root snapshots
-    5. Parser extractors output to urls.jsonl
-    6. URLs are added to Crawl.urls and child Snapshots are created
-    7. Repeat until max_depth is reached
-    """
+    """Add a URL list or imported URL document to a new Crawl."""
 
     from rich import print
 
@@ -125,12 +114,12 @@ def add(
     created_by_id = created_by_id or get_or_create_system_user_pk()
     started_at = timezone.now()
 
-    use_internal_input_root = isinstance(urls, str)
-    source_text = (
-        urls
-        if use_internal_input_root
-        else "\n".join(json.dumps({"type": "CrawlSeed", "url": str(url), "depth": 0}, separators=(",", ":")) for url in urls)
-    )
+    if isinstance(urls, str):
+        source_text = urls
+    else:
+        from archivebox.misc.util import validate_url
+
+        source_text = "\n".join(validate_url(str(url)) for url in urls)
 
     # 2. Create a new Crawl with inline URLs
     # Foreground add must claim runner ownership before publishing runnable
@@ -187,12 +176,7 @@ def add(
     try:
         crawl = Crawl.objects.create(
             urls=source_text,
-            # Stdin/import text gets an extra hop because the synthetic
-            # archivebox://internal root lives at depth 0 and parser-discovered
-            # URLs land at depth 1; direct URL args become the depth=0 input
-            # snapshots themselves so --depth=N matches the deepest hop the user
-            # asked for.
-            max_depth=depth + 1 if use_internal_input_root else depth,
+            max_depth=depth,
             tags_str=tag,
             persona_id=persona_obj.id,
             label=f"{USER}@{HOSTNAME} $ {cmd_str} [{timestamp}]",
@@ -213,9 +197,8 @@ def add(
     print(f"[green]\\[+] Created Crawl {crawl.id} with max_depth={depth}[/green]")
     print(f"    [dim]First URL: {first_url}[/dim]")
 
-    # 3. The CrawlMachine will create Snapshots from all URLs when started
-    #    Parser extractors run on snapshots and discover more URLs
-    #    Discovered URLs become child Snapshots (depth+1)
+    # The runner parses Crawl.urls after claiming the Crawl, then persists the
+    # resulting depth-0 Snapshot facts. Recursive discoveries start at depth 1.
 
     if index_only:
         print("[yellow]\\[*] Index-only mode - URLs queued, runner not started[/yellow]")
@@ -421,13 +404,13 @@ def main(**kwargs):
         if only_new is not None:
             kwargs["config"] = {"ONLY_NEW": bool(only_new)}
         if extract:
-            from abx_dl.models import discover_plugins, plugins_matching_output
+            from archivebox.plugins.discovery import get_plugin_catalog
 
-            all_plugins = discover_plugins()
+            catalog = get_plugin_catalog()
             tokens = [token.strip() for token in extract.split(",") if token.strip()]
-            plugin_names = {name.lower(): name for name in all_plugins}
+            plugin_names = {name.lower(): name for name in catalog}
             selected = [plugin_names[token.lower()] for token in tokens if token.lower() in plugin_names]
-            selected += plugins_matching_output(all_plugins, tokens)
+            selected += catalog.matching_output(tokens)
             if not selected:
                 raise click.UsageError(f"No plugins found matching extract types: {extract}")
             existing = [token.strip() for token in (kwargs.get("plugins") or "").split(",") if token.strip()]

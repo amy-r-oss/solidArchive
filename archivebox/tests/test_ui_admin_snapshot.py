@@ -18,7 +18,7 @@ from django.urls import reverse
 
 from archivebox.core.middleware import ADMIN_LOGIN_HINT_COOKIE
 from archivebox.tests.conftest import ADMIN_TEST_HOST
-from archivebox.tests.test_archive_result_service import _run_shipped_snapshot_hook, _snapshot_hook_name
+from archivebox.tests.test_archive_result_service import _run_shipped_snapshot_hook
 
 pytestmark = pytest.mark.django_db(transaction=True)
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -98,9 +98,9 @@ def running_wget_projection(snapshot, blocking_http_server):
         retry_at=now,
         downloaded_at=None,
         url=blocking_http_server.url,
+        config={"PLUGINS": "wget"},
     )
     snapshot.refresh_from_db()
-    [result] = snapshot.create_pending_archiveresults(hooks=[("wget", _snapshot_hook_name("wget"))])
     errors = []
 
     def run_snapshot():
@@ -115,7 +115,7 @@ def running_wget_projection(snapshot, blocking_http_server):
     runner.start()
     blocking_http_server.request_started.wait()
     assert errors == []
-    result.refresh_from_db()
+    result = ArchiveResult.objects.get(snapshot=snapshot, plugin="wget")
     assert result.status == ArchiveResult.StatusChoices.STARTED
     yield result
     blocking_http_server.release_response.set()
@@ -324,6 +324,35 @@ def test_snapshot_admin_preview_uses_extension_screenshot_when_standard_screensh
     assert "chrome_extension_screenshot/screenshot-2.png" not in preview["fallback_list"]
 
 
+def test_snapshot_admin_attributes_new_tags_to_authenticated_user(client, snapshot, admin_user):
+    from archivebox.core.models import Tag
+
+    client.force_login(admin_user)
+    response = client.post(
+        reverse("admin:core_snapshot_change", args=[snapshot.pk]),
+        {
+            "url": snapshot.url,
+            "title": snapshot.title or "",
+            "tags_editor": "admin-created-tag",
+            "permissions_config": "private",
+            "status": snapshot.status,
+            "retry_at": "",
+            "bookmarked_at_0": snapshot.bookmarked_at.date().isoformat(),
+            "bookmarked_at_1": snapshot.bookmarked_at.time().isoformat(),
+            "crawl": str(snapshot.crawl_id),
+            "config": '{"SAVE_ARCHIVE_DOT_ORG": "false"}',
+            "notes": "",
+            "_save": "Save",
+        },
+        HTTP_HOST=ADMIN_TEST_HOST,
+    )
+
+    assert response.status_code == 302, response.context and response.context["adminform"].form.errors
+    tag = Tag.objects.get(name="admin-created-tag")
+    assert tag.created_by == admin_user
+    assert snapshot.tags.filter(pk=tag.pk).exists()
+
+
 class TestSnapshotProgressStats:
     """Tests for Snapshot.get_progress_stats() method."""
 
@@ -370,7 +399,6 @@ class TestSnapshotProgressStats:
     def test_snapshot_admin_progress_uses_expected_hook_total_not_observed_result_count(
         self,
         snapshot,
-        real_hash_projection,
         running_wget_projection,
     ):
         from archivebox.core.admin_site import archivebox_admin
@@ -379,7 +407,6 @@ class TestSnapshotProgressStats:
         from archivebox.config.common import get_config
         from django.urls import resolve
 
-        assert real_hash_projection[1].status == ArchiveResult.StatusChoices.SUCCEEDED
         assert running_wget_projection.status == ArchiveResult.StatusChoices.STARTED
 
         prefetched_snapshot = Snapshot.objects.prefetch_related("archiveresult_set").get(pk=snapshot.pk)
@@ -393,13 +420,13 @@ class TestSnapshotProgressStats:
         stats = admin._get_progress_stats(prefetched_snapshot)
         html = str(admin.status_with_progress(prefetched_snapshot))
 
-        assert expected_total > 2
+        assert expected_total > 1
         assert stats["total"] == expected_total
-        assert stats["succeeded"] == 1
+        assert stats["succeeded"] == 0
         assert stats["running"] == 1
-        assert stats["pending"] == expected_total - 2
-        assert stats["percent"] == int(100 / expected_total)
-        assert f"1/{expected_total} hooks" in html
+        assert stats["pending"] == expected_total - 1
+        assert stats["percent"] == 0
+        assert f"0/{expected_total} hooks" in html
 
     def test_get_progress_stats_sealed(self, snapshot):
         """Test progress stats for sealed snapshot."""
@@ -485,9 +512,45 @@ class TestSnapshotProgressStats:
 
         assert _count_media_files(result) == 2
         assert _list_media_files(result) == [
-            {"name": "audio.mp3", "path": "ytdlp/audio.mp3", "size": 222},
-            {"name": "video.mp4", "path": "ytdlp/video.mp4", "size": 111},
+            {
+                "name": "video.mp4",
+                "path": "ytdlp/video.mp4",
+                "size": 111,
+                "media_type": "video",
+                "is_video": True,
+                "is_audio": False,
+                "is_browser_playable": True,
+            },
+            {
+                "name": "audio.mp3",
+                "path": "ytdlp/audio.mp3",
+                "size": 222,
+                "media_type": "audio",
+                "is_video": False,
+                "is_audio": True,
+                "is_browser_playable": True,
+            },
         ]
+
+    def test_ytdlp_discover_outputs_prefers_browser_playable_video(self, snapshot):
+        from archivebox.core.models import ArchiveResult
+
+        ArchiveResult.objects.create(
+            snapshot=snapshot,
+            plugin="ytdlp",
+            status="succeeded",
+            output_files={
+                "thumbnail.jpg": {"size": 20_000, "mimetype": "image/jpeg", "extension": "jpg"},
+                "large.mkv": {"size": 10_000, "mimetype": "video/x-matroska", "extension": "mkv"},
+                "small.mp4": {"size": 111, "mimetype": "video/mp4", "extension": "mp4"},
+            },
+            output_size=30_111,
+        )
+
+        outputs = snapshot.discover_outputs(include_filesystem_fallback=False)
+        ytdlp_output = next(output for output in outputs if output["name"] == "ytdlp")
+
+        assert ytdlp_output["path"] == "ytdlp/small.mp4"
 
     def test_discover_outputs_falls_back_to_hashes_index_without_filesystem_walk(
         self,
@@ -928,10 +991,9 @@ class TestSnapshotOutputDeletion:
         from archivebox.core.models import ArchiveResult
 
         first = self._create_output(snapshot, size=11)
-        second = self._create_output(snapshot, plugin="singlefile", hook_name="on_Snapshot__50_singlefile.py", size=13)
+        second = self._create_output(snapshot, hook_name="on_Snapshot__51_screenshot_retry.py", size=13)
         kept = self._create_output(snapshot, plugin="pdf", hook_name="on_Snapshot__60_pdf.py", size=7)
         deleted_dir = Path(first.output_dir)
-        second_deleted_dir = Path(second.output_dir)
         kept_dir = Path(kept.output_dir)
         hashes_dir = Path(snapshot.output_dir) / "hashes"
         hashes_dir.mkdir(parents=True, exist_ok=True)
@@ -964,7 +1026,6 @@ class TestSnapshotOutputDeletion:
         assert not ArchiveResult.objects.filter(pk__in=[first.pk, second.pk]).exists()
         assert ArchiveResult.objects.filter(pk=kept.pk).exists()
         assert not deleted_dir.exists()
-        assert not second_deleted_dir.exists()
         assert kept_dir.exists()
         snapshot.refresh_from_db()
         assert snapshot.output_size == 7
@@ -1290,7 +1351,10 @@ class TestAdminSnapshotListView:
         assert response.status_code == 302
         assert response["Location"].endswith(f"/admin/core/snapshot/{snapshot.pk}/change/")
         failed.refresh_from_db()
-        assert failed.status == ArchiveResult.StatusChoices.QUEUED
+        snapshot.refresh_from_db()
+        assert failed.status == ArchiveResult.StatusChoices.FAILED
+        assert snapshot.status == snapshot.StatusChoices.QUEUED
+        assert snapshot.config["RETRY_PLUGINS"] == ["title"]
 
     def test_list_redo_failed_action_requeues_failed_archiveresults_only(
         self,
@@ -1328,14 +1392,12 @@ class TestAdminSnapshotListView:
         failed.refresh_from_db()
         succeeded.refresh_from_db()
         snapshot.refresh_from_db()
-        assert failed.status == ArchiveResult.StatusChoices.QUEUED
-        assert failed.output_str == ""
-        assert failed.output_files == {}
-        assert failed.output_size == 0
-        assert failed.output_mimetypes == ""
+        assert failed.status == ArchiveResult.StatusChoices.FAILED
+        assert failed.output_str
         assert succeeded.status == ArchiveResult.StatusChoices.SUCCEEDED
         assert succeeded.output_str == succeeded_output
         assert snapshot.status == snapshot.StatusChoices.QUEUED
+        assert snapshot.config["RETRY_PLUGINS"] == ["title"]
 
     def test_archive_now_action_uses_original_snapshot_url_without_timestamp_suffix(self, client, admin_user, snapshot):
         from archivebox.crawls.models import Crawl

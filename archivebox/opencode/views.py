@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import atexit
 import base64
+import logging
 import os
 import re
+import signal
 import shutil
 import subprocess
 import threading
@@ -18,11 +20,13 @@ from abx_plugins.plugins import opencode as opencode_plugin
 from archivebox.config import CONSTANTS
 from archivebox.config.common import get_config
 from archivebox.core.routes_util import build_admin_url, get_api_base_url, get_base_url
+from asgiref.sync import sync_to_async
 from django.http import (
     Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseForbidden,
+    JsonResponse,
     StreamingHttpResponse,
 )
 from django.shortcuts import redirect, render
@@ -30,7 +34,10 @@ from django.views.decorators.csrf import csrf_exempt
 
 
 _PROCESS: subprocess.Popen | None = None
+_PROCESS_READY: subprocess.Popen | None = None
 _PROCESS_LOCK = threading.Lock()
+_SESSION_LOCK = threading.Lock()
+_LOGGER = logging.getLogger(__name__)
 _PROXY_PREFIX = "/admin/agent/opencode"
 _PROXY_PREFIX_REGEX = _PROXY_PREFIX.replace("/", r"\/")
 _PROXY_PREFIX_NO_SLASH_REGEX = _PROXY_PREFIX.lstrip("/").replace("/", r"\/")
@@ -39,7 +46,6 @@ _CONFIG_PATH = Path(opencode_plugin.__file__).with_name("config.json")
 _TEXT_CONTENT_TYPES = (
     "text/",
     "application/javascript",
-    "application/json",
     "application/x-javascript",
 )
 _HOP_BY_HOP_HEADERS = {
@@ -83,20 +89,33 @@ You are running inside an ArchiveBox collection directory.
 """
 
 
+def _signal_owned_process(process: subprocess.Popen, sig: signal.Signals) -> None:
+    try:
+        os.killpg(process.pid, sig)
+    except OSError:
+        try:
+            process.send_signal(sig)
+        except ProcessLookupError:
+            pass
+
+
 def _stop_owned_process(process: subprocess.Popen | None = None) -> None:
-    global _PROCESS
+    global _PROCESS, _PROCESS_READY
     owned_process = process or _PROCESS
     if owned_process is None:
         return
     if owned_process.poll() is None:
-        owned_process.terminate()
+        _signal_owned_process(owned_process, signal.SIGCONT)
+        _signal_owned_process(owned_process, signal.SIGTERM)
         try:
             owned_process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            owned_process.kill()
+            _signal_owned_process(owned_process, signal.SIGKILL)
             owned_process.wait()
     if _PROCESS is owned_process:
         _PROCESS = None
+    if _PROCESS_READY is owned_process:
+        _PROCESS_READY = None
 
 
 atexit.register(_stop_owned_process)
@@ -196,18 +215,19 @@ def _settings(config: dict) -> dict:
     host = str(_config_value(config, "OPENCODE_HOST", "127.0.0.1"))
     port = int(_config_value(config, "OPENCODE_PORT", 4096))
     default_data_dir = _archivebox_data_dir_default()
-    workdir = Path(
-        str(_config_value(config, "OPENCODE_WORKDIR", default_data_dir)),
-    ).expanduser()
     opencode_dir = Path(
-        str(_config_value(config, "OPENCODE_STATE_DIR", workdir / "opencode")),
+        str(_config_value(config, "OPENCODE_STATE_DIR", default_data_dir / "opencode")),
+    ).expanduser()
+    workdir = Path(
+        str(_config_value(config, "OPENCODE_WORKDIR", opencode_dir / "workdir")),
     ).expanduser()
     binary = str(_config_value(config, "OPENCODE_BINARY", "opencode"))
-    timeout = int(_config_value(config, "OPENCODE_TIMEOUT", 30))
+    timeout = int(_config_value(config, "OPENCODE_TIMEOUT", 120))
     return {
         "host": host,
         "port": port,
         "origin": f"http://{host}:{port}",
+        "archivebox_data_dir": default_data_dir,
         "workdir": workdir,
         "opencode_dir": opencode_dir,
         "config_home": opencode_dir / "config",
@@ -287,7 +307,7 @@ def _ensure_project_files(settings: dict) -> None:
     if not editable_skill_path.exists():
         editable_skill_path.write_text(
             _ARCHIVEBOX_SKILL.format(
-                archivebox_data_dir=workdir,
+                archivebox_data_dir=settings["archivebox_data_dir"],
                 archivebox_base_url=settings.get("archivebox_base_url", ""),
                 archivebox_admin_url=settings.get("archivebox_admin_url", ""),
                 archivebox_api_url=settings.get("archivebox_api_url", ""),
@@ -352,63 +372,79 @@ def _ensure_default_session(settings: dict) -> str:
     return session_id
 
 
-def _recent_session_id(settings: dict) -> str:
-    workdir = str(settings["workdir"].resolve())
-    try:
-        response = requests.get(
-            f"{settings['origin']}/session",
-            params={"directory": workdir, "roots": "true", "limit": 1},
-            timeout=settings["timeout"],
-        )
-        response.raise_for_status()
-        sessions = response.json()
-        if sessions:
-            return str(sessions[0].get("id") or "")
-    except requests.RequestException:
-        pass
-    return ""
+def _owned_process_running() -> bool:
+    process = _PROCESS
+    return process is not None and process.poll() is None
 
 
-def _health(settings: dict) -> bool:
+def _owned_process_ready() -> bool:
+    process = _PROCESS_READY
+    return process is not None and process is _PROCESS and process.poll() is None
+
+
+def _health(settings: dict, timeout: float = 2) -> bool:
     try:
         response = requests.get(
             f"{settings['origin']}/global/health",
-            timeout=2,
+            timeout=timeout,
         )
         return response.status_code == 200
     except requests.RequestException:
         return False
 
 
+def _opencode_version(settings: dict) -> str:
+    try:
+        response = requests.get(
+            f"{settings['origin']}/global/health",
+            timeout=2,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return str(data.get("version") or "") if isinstance(data, dict) else ""
+    except (requests.RequestException, ValueError):
+        return ""
+
+
 def _ensure_opencode(settings: dict) -> tuple[bool, str]:
-    global _PROCESS
+    global _PROCESS, _PROCESS_READY
     started_process: subprocess.Popen | None = None
     workdir = settings["workdir"].resolve()
-    try:
-        binary, git_binary, binary_env = _resolve_binary(
-            settings["binary"],
-            settings["config"],
-        )
-    except RuntimeError as err:
-        return False, str(err)
-
-    env = {
-        **os.environ,
-        **binary_env,
-        "ARCHIVEBOX_BASE_URL": str(settings.get("archivebox_base_url", "")),
-        "ARCHIVEBOX_ADMIN_URL": str(settings.get("archivebox_admin_url", "")),
-        "ARCHIVEBOX_API_URL": str(settings.get("archivebox_api_url", "")),
-        "BROWSER": "false",
-        "GIT_CEILING_DIRECTORIES": str(workdir),
-        "HOME": str(settings["home"]),
-        "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
-        "XDG_CONFIG_HOME": str(settings["config_home"]),
-        "XDG_DATA_HOME": str(settings["data_home"]),
-        "XDG_STATE_HOME": str(settings["state_home"]),
-        "XDG_CACHE_HOME": str(settings["cache_home"]),
-    }
 
     with _PROCESS_LOCK:
+        if _owned_process_ready():
+            return True, ""
+        if _health(settings):
+            if _owned_process_running():
+                _PROCESS_READY = _PROCESS
+            return True, ""
+        if _owned_process_running():
+            _stop_owned_process(_PROCESS)
+
+        try:
+            binary, git_binary, binary_env = _resolve_binary(
+                settings["binary"],
+                settings["config"],
+            )
+        except RuntimeError as err:
+            return False, str(err)
+
+        env = {
+            **os.environ,
+            **binary_env,
+            "ARCHIVEBOX_BASE_URL": str(settings.get("archivebox_base_url", "")),
+            "ARCHIVEBOX_ADMIN_URL": str(settings.get("archivebox_admin_url", "")),
+            "ARCHIVEBOX_API_URL": str(settings.get("archivebox_api_url", "")),
+            "BROWSER": "false",
+            "GIT_CEILING_DIRECTORIES": str(workdir),
+            "HOME": str(settings["home"]),
+            "OPENCODE_DISABLE_PROJECT_CONFIG": "true",
+            "XDG_CONFIG_HOME": str(settings["config_home"]),
+            "XDG_DATA_HOME": str(settings["data_home"]),
+            "XDG_STATE_HOME": str(settings["state_home"]),
+            "XDG_CACHE_HOME": str(settings["cache_home"]),
+        }
+
         settings["workdir"].mkdir(parents=True, exist_ok=True)
         settings["config_home"].mkdir(parents=True, exist_ok=True)
         settings["data_home"].mkdir(parents=True, exist_ok=True)
@@ -435,10 +471,6 @@ def _ensure_opencode(settings: dict) -> tuple[bool, str]:
                 )
 
         if _health(settings):
-            try:
-                _ensure_default_session(settings)
-            except (requests.RequestException, RuntimeError, ValueError) as err:
-                return False, f"OpenCode project initialization failed: {err}"
             return True, ""
 
         binary_abspath = binary.loaded_abspath
@@ -461,27 +493,32 @@ def _ensure_opencode(settings: dict) -> tuple[bool, str]:
                 env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
+            _PROCESS_READY = None
             started_process = _PROCESS
         except FileNotFoundError:
             return False, f"OpenCode binary not found: {settings['binary']}"
 
         deadline = time.monotonic() + settings["timeout"]
-        while time.monotonic() < deadline:
-            if _health(settings):
-                try:
-                    _ensure_default_session(settings)
-                except (requests.RequestException, RuntimeError, ValueError) as err:
-                    _stop_owned_process(started_process)
-                    return False, f"OpenCode project initialization failed: {err}"
-                return True, ""
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if _health(settings, timeout=min(2, remaining)):
+                if time.monotonic() <= deadline:
+                    _PROCESS_READY = started_process
+                    return True, ""
+                break
             if started_process and started_process.poll() is not None:
                 if _PROCESS is started_process:
                     _PROCESS = None
+                if _PROCESS_READY is started_process:
+                    _PROCESS_READY = None
                 return False, "OpenCode exited before the web server became ready."
-            time.sleep(0.25)
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(0.25, remaining))
 
         _stop_owned_process(started_process)
         return False, "Timed out waiting for OpenCode to start."
@@ -501,9 +538,21 @@ def agent_view(request: HttpRequest):
     settings["archivebox_admin_url"] = admin_url
     settings["archivebox_api_url"] = api_url
     ok, error = _ensure_opencode(settings)
+    recent_session_id = ""
+    opencode_version = ""
+    if ok:
+        try:
+            with _SESSION_LOCK:
+                recent_session_id = _ensure_default_session(settings)
+            opencode_version = _opencode_version(settings)
+            if not opencode_version:
+                ok = False
+                error = "OpenCode health check did not report its version."
+        except (requests.RequestException, RuntimeError, ValueError) as err:
+            ok = False
+            error = f"OpenCode project initialization failed: {err}"
     from archivebox.core.admin_site import archivebox_admin
 
-    recent_session_id = _recent_session_id(settings) if ok else ""
     context = {
         **archivebox_admin.each_context(request),
         "title": "Agent",
@@ -515,6 +564,8 @@ def agent_view(request: HttpRequest):
         # open the durable session URL so a fresh browser does not land on the
         # transient new-session route and appear to have lost prior sessions.
         "proxy_url": _project_route(settings["workdir"], recent_session_id),
+        "proxy_prefix": _PROXY_PREFIX,
+        "opencode_version": opencode_version,
         "workdir": str(settings["workdir"].resolve()),
         "recent_session_id": recent_session_id,
     }
@@ -524,6 +575,23 @@ def agent_view(request: HttpRequest):
         context,
         status=200 if ok else 502,
     )
+
+
+def agent_health_view(request: HttpRequest):
+    config = _machine_config()
+    _require_enabled(config)
+    auth_response = _require_superuser(request)
+    if auth_response:
+        return auth_response
+
+    version = _opencode_version(_settings(config))
+    healthy = bool(version)
+    response = JsonResponse(
+        {"healthy": healthy, "version": version},
+        status=200 if healthy else 503,
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _proxy_url(settings: dict, path: str | None) -> str:
@@ -557,19 +625,34 @@ def _request_params(request: HttpRequest) -> tuple[tuple[str, str], ...]:
     return tuple((key, str(value)) for key, value in dict(request.GET).items())
 
 
-async def _event_chunks(request: HttpRequest, settings: dict, path: str | None):
+async def _event_chunks(
+    settings: dict,
+    path: str | None,
+    method: str,
+    params: tuple[tuple[str, str], ...],
+    headers: dict[str, str],
+):
+    if not _owned_process_ready():
+        ok, error = await sync_to_async(_ensure_opencode, thread_sensitive=False)(settings)
+        if not ok:
+            _LOGGER.warning("OpenCode event stream unavailable: %s", error)
+            yield b'event: error\ndata: {"error":"OpenCode upstream unavailable"}\n\n'
+            return
+
     timeout = httpx.Timeout(settings["timeout"], read=None)
     url = _proxy_url(settings, path)
-    method = request.method or "GET"
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-        async with client.stream(
-            method,
-            url,
-            params=_request_params(request),
-            headers=_request_headers(request, settings),
-        ) as upstream:
-            async for chunk in upstream.aiter_raw(chunk_size=512):
-                yield chunk
+    try:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            async with client.stream(
+                method,
+                url,
+                params=params,
+                headers=headers,
+            ) as upstream:
+                async for chunk in upstream.aiter_raw(chunk_size=512):
+                    yield chunk
+    except httpx.RequestError as err:
+        _LOGGER.warning("OpenCode event stream ended: %s", err)
 
 
 def _rewrite_text(body: bytes, settings: dict) -> bytes:
@@ -633,6 +716,15 @@ def _response_headers(upstream: requests.Response, settings: dict) -> dict[str, 
     return headers
 
 
+def _proxy_error_response(error: Exception | str) -> HttpResponse:
+    _LOGGER.warning("OpenCode upstream request failed: %s", error)
+    return HttpResponse(
+        b"OpenCode upstream request failed.",
+        status=502,
+        content_type="text/plain; charset=utf-8",
+    )
+
+
 @csrf_exempt
 def opencode_proxy_view(request: HttpRequest, path: str | None = None):
     config = _machine_config()
@@ -651,22 +743,26 @@ def opencode_proxy_view(request: HttpRequest, path: str | None = None):
     settings["archivebox_base_url"] = base_url
     settings["archivebox_admin_url"] = admin_url
     settings["archivebox_api_url"] = api_url
-    ok, error = _ensure_opencode(settings)
-    if not ok:
-        return HttpResponse(
-            error.encode(),
-            status=502,
-            content_type="text/plain; charset=utf-8",
-        )
 
     if request.method == "GET" and (path or "").endswith("/event"):
         response = StreamingHttpResponse(
-            _event_chunks(request, settings, path),
+            _event_chunks(
+                settings,
+                path,
+                request.method or "GET",
+                _request_params(request),
+                _request_headers(request, settings),
+            ),
             content_type="text/event-stream",
         )
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Accel-Buffering"] = "no"
         return response
+
+    if path == "global/health" or not _owned_process_ready():
+        ok, error = _ensure_opencode(settings)
+        if not ok:
+            return _proxy_error_response(error)
 
     try:
         method = request.method or "GET"
@@ -677,39 +773,27 @@ def opencode_proxy_view(request: HttpRequest, path: str | None = None):
             data=request.body if method not in {"GET", "HEAD"} else None,
             headers=_request_headers(request, settings),
             stream=True,
-            timeout=(settings["timeout"], None),
+            timeout=settings["timeout"],
             allow_redirects=False,
         )
     except requests.RequestException as err:
-        return HttpResponse(
-            str(err).encode(),
-            status=502,
-            content_type="text/plain; charset=utf-8",
-        )
+        return _proxy_error_response(err)
+
+    try:
+        body = upstream.content
+    except requests.RequestException as err:
+        upstream.close()
+        return _proxy_error_response(err)
 
     content_type = upstream.headers.get("Content-Type", "")
-    is_event_stream = content_type.startswith("text/event-stream")
-    is_text = not is_event_stream and any(content_type.startswith(prefix) for prefix in _TEXT_CONTENT_TYPES)
     headers = _response_headers(upstream, settings)
-    if is_text:
-        body = _rewrite_text(upstream.content, settings)
-        response = HttpResponse(
-            body,
-            status=upstream.status_code,
-            content_type=content_type or "text/plain; charset=utf-8",
-        )
-    elif is_event_stream:
-        response = StreamingHttpResponse(
-            upstream.iter_lines(chunk_size=1),
-            status=upstream.status_code,
-            content_type=content_type or "text/event-stream",
-        )
-    else:
-        response = StreamingHttpResponse(
-            upstream.iter_content(chunk_size=64 * 1024),
-            status=upstream.status_code,
-            content_type=content_type or "application/octet-stream",
-        )
+    if any(content_type.startswith(prefix) for prefix in _TEXT_CONTENT_TYPES):
+        body = _rewrite_text(body, settings)
+    response = HttpResponse(
+        body,
+        status=upstream.status_code,
+        content_type=content_type or "application/octet-stream",
+    )
     for key, value in headers.items():
         response.headers[key] = value
     response.headers["Cache-Control"] = "no-store"

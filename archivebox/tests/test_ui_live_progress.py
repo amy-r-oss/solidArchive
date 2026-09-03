@@ -14,21 +14,21 @@ from django.utils import timezone
 
 from archivebox.tests.conftest import ADMIN_TEST_HOST
 from archivebox.tests.conftest import cli_env, resolve_abxpkg_binary_env, run_archivebox_cmd
-from archivebox.tests.test_archive_result_service import _run_shipped_snapshot_hook, _snapshot_hook_name
+from archivebox.tests.test_archive_result_service import _run_shipped_snapshot_hook
 
 pytestmark = pytest.mark.django_db(transaction=True)
 
 
 @pytest.fixture
 def real_unscoped_hook_process(tmp_path):
-    from archivebox.plugins.hooks import run_hook
+    from archivebox.tests.conftest import run_test_hook
 
     snap_dir = tmp_path / "snapshot"
     output_dir = snap_dir / "hashes"
     output_dir.mkdir(parents=True)
     (snap_dir / "source.txt").write_text("real live progress input", encoding="utf-8")
     hook_path = Path(str(files("abx_plugins.plugins.hashes").joinpath("on_Snapshot__93_hashes.py")))
-    process = run_hook(
+    process = run_test_hook(
         hook_path,
         output_dir,
         config={"ABXPKG_LIB_DIR": str(tmp_path / "lib"), "SNAP_DIR": str(snap_dir)},
@@ -55,7 +55,7 @@ def real_snapshot_hook_projection(snapshot, cached_abxpkg_lib_dir):
 
 @pytest.fixture
 def real_second_snapshot_hook_process(snapshot, tmp_path):
-    from archivebox.plugins.hooks import run_hook
+    from archivebox.tests.conftest import run_test_hook
 
     snap_dir = Path(snapshot.output_dir)
     staticfile_dir = snap_dir / "staticfile"
@@ -64,7 +64,7 @@ def real_second_snapshot_hook_process(snapshot, tmp_path):
     output_dir.mkdir(parents=True, exist_ok=True)
     (staticfile_dir / "input.txt").write_text("plain text without links", encoding="utf-8")
     hook_path = Path(str(files("abx_plugins.plugins.parse_txt_urls").joinpath("on_Snapshot__71_parse_txt_urls.py")))
-    process = run_hook(
+    process = run_test_hook(
         hook_path,
         output_dir,
         config={"ABXPKG_LIB_DIR": str(tmp_path / "lib"), "SNAP_DIR": str(snap_dir)},
@@ -78,7 +78,7 @@ def real_second_snapshot_hook_process(snapshot, tmp_path):
 
 @pytest.fixture
 def real_crawl_setup_process(snapshot, hermetic_lib_dir):
-    from archivebox.plugins.hooks import run_hook
+    from archivebox.tests.conftest import run_test_hook
     from archivebox.services.runner import run_install
 
     hook_path = Path(str(files("abx_plugins.plugins.chrome").joinpath("on_CrawlSetup__89_chrome_kill_zombies.js")))
@@ -86,7 +86,7 @@ def real_crawl_setup_process(snapshot, hermetic_lib_dir):
     run_install(plugin_names=["chrome"])
     binary_env = resolve_abxpkg_binary_env(hermetic_lib_dir, deps_from=config_path)
     output_dir = Path(snapshot.crawl.output_dir) / "chrome"
-    process = run_hook(
+    process = run_test_hook(
         hook_path,
         output_dir,
         config={
@@ -179,7 +179,12 @@ class TestLiveProgressView:
             ended_at=now - timedelta(hours=1),
             modified_at=now - timedelta(hours=1),
         )
-        snapshot.create_pending_archiveresults(hooks=[("chrome", "on_Snapshot__11_chrome_wait")])
+        ArchiveResult.objects.create(
+            snapshot=snapshot,
+            plugin="chrome",
+            hook_name="on_Snapshot__11_chrome_wait",
+            status=ArchiveResult.StatusChoices.QUEUED,
+        )
 
         response = client.get("/progress.json", HTTP_HOST=ADMIN_TEST_HOST)
 
@@ -218,9 +223,9 @@ class TestLiveProgressView:
             created_at=now - timedelta(hours=2),
             downloaded_at=None,
             url=blocking_http_server.url,
+            config={"PLUGINS": "wget"},
         )
         snapshot.refresh_from_db()
-        [result] = snapshot.create_pending_archiveresults(hooks=[("wget", _snapshot_hook_name("wget"))])
         errors = []
 
         def run_snapshot():
@@ -236,7 +241,7 @@ class TestLiveProgressView:
         try:
             blocking_http_server.request_started.wait()
             assert errors == []
-            result.refresh_from_db()
+            result = ArchiveResult.objects.get(snapshot=snapshot, plugin="wget")
             assert result.status == ArchiveResult.StatusChoices.STARTED
             Snapshot.objects.filter(pk=snapshot.pk).update(modified_at=timezone.now())
 
@@ -257,7 +262,7 @@ class TestLiveProgressView:
         assert result.status in (ArchiveResult.StatusChoices.SUCCEEDED, ArchiveResult.StatusChoices.NORESULTS)
 
     def test_live_progress_hides_finished_cancelled_crawl(self, client, admin_user, crawl, snapshot):
-        from archivebox.core.models import Snapshot
+        from archivebox.core.models import ArchiveResult, Snapshot
         from archivebox.crawls.models import Crawl
 
         now = timezone.now()
@@ -272,7 +277,12 @@ class TestLiveProgressView:
             downloaded_at=None,
             modified_at=now,
         )
-        snapshot.create_pending_archiveresults(hooks=[("singlefile", "on_Snapshot__50_singlefile")])
+        ArchiveResult.objects.create(
+            snapshot=snapshot,
+            plugin="singlefile",
+            hook_name="on_Snapshot__50_singlefile",
+            status=ArchiveResult.StatusChoices.QUEUED,
+        )
 
         client.force_login(admin_user)
         response = client.get(reverse("live_progress"), HTTP_HOST=ADMIN_TEST_HOST)

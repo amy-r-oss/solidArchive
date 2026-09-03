@@ -1660,6 +1660,74 @@ def resolve_abxpkg_binary_env(
     return {str(key): str(value) for key, value in payload.items()}
 
 
+def run_test_hook(
+    script: Path,
+    output_dir: Path,
+    config: dict[str, Any] | None = None,
+    timeout: int = 60,
+    **arguments: Any,
+):
+    """Execute a shipped finite hook through abx-dl and ArchiveBox's real DB projector."""
+    import asyncio
+
+    from abx_dl.execution import execute_hook
+    from abx_dl.orchestrator import create_bus
+    from archivebox.machine.models import Process
+    from archivebox.plugins.discovery import get_plugin_catalog
+    from archivebox.services.process_service import ProcessService, parse_event_datetime
+
+    resolved_script = script.resolve()
+    hook = next(
+        (hook for plugin in get_plugin_catalog().values() for hook in plugin.hooks if hook.path.resolve() == resolved_script),
+        None,
+    )
+    assert hook is not None, f"shipped hook is not in the plugin catalog: {script}"
+    assert not hook.is_background, f"run_test_hook only supports finite hooks: {hook.full_name}"
+
+    env = os.environ.copy()
+    for key, value in (config or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, bool):
+            env[key] = "true" if value else "false"
+        elif isinstance(value, (dict, list, tuple)):
+            env[key] = json.dumps(value)
+        else:
+            env[key] = str(value)
+    if env.get("NODE_MODULES_DIR"):
+        env.setdefault("NODE_MODULE_DIR", env["NODE_MODULES_DIR"])
+
+    bus = create_bus(name=f"test_hook_{hook.plugin_name}", total_timeout=float(timeout) + 30.0)
+    ProcessService(bus)
+
+    async def execute_and_close():
+        try:
+            return await execute_hook(
+                hook,
+                output_dir=output_dir,
+                env=env,
+                arguments=arguments,
+                timeout=timeout,
+                bus=bus,
+                process_type=Process.TypeChoices.HOOK,
+            )
+        finally:
+            await bus.wait_until_idle()
+            await bus.destroy(clear=False)
+
+    completed = asyncio.run(execute_and_close())
+    process = (
+        Process.objects.filter(
+            pid=completed.pid or None,
+            started_at=parse_event_datetime(completed.start_ts),
+        )
+        .order_by("-modified_at")
+        .first()
+    )
+    assert process is not None, f"hook completed without an ArchiveBox Process projection: {hook.full_name}"
+    return process
+
+
 def resolve_abxpkg_chrome_env(lib_dir: Path, env: dict[str, str] | None = None) -> dict[str, str]:
     from abx_plugins import get_plugins_dir
 
@@ -1683,7 +1751,7 @@ def install_real_binary(
     binproviders: str = "env",
     overrides: dict[str, dict[str, Any]] | None = None,
 ):
-    """Install and persist a real binary through the normal Binary state machine."""
+    """Install and persist a real binary through the normal Binary lifecycle."""
     from archivebox.machine.models import Binary, Machine
 
     binary = Binary.objects.create(
@@ -1693,7 +1761,7 @@ def install_real_binary(
         overrides=overrides or {},
         status=Binary.StatusChoices.QUEUED,
     )
-    assert binary.tick_claimed(lock_seconds=600)
+    assert binary.install_claimed(lock_seconds=600)
     binary.refresh_from_db()
     assert binary.status == Binary.StatusChoices.INSTALLED
     assert binary.retry_at is None

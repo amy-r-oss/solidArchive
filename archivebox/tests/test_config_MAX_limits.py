@@ -67,7 +67,7 @@ def test_enqueue_discovered_snapshots_refreshes_crawl_limits(tmp_path):
     from archivebox.base_models.models import get_or_create_system_user_pk
     from archivebox.crawls.models import Crawl
     from archivebox.core.models import Snapshot
-    from archivebox.plugins.hooks import run_hook
+    from archivebox.tests.conftest import run_test_hook
     from archivebox.services.runner import CrawlRunner
 
     crawl = Crawl.objects.create(
@@ -92,7 +92,7 @@ def test_enqueue_discovered_snapshots_refreshes_crawl_limits(tmp_path):
         encoding="utf-8",
     )
     hook_path = Path(str(files("abx_plugins.plugins.parse_txt_urls").joinpath("on_Snapshot__71_parse_txt_urls.py")))
-    process = run_hook(
+    process = run_test_hook(
         hook_path,
         parser_dir,
         config={"ABXPKG_LIB_DIR": str(tmp_path / "lib"), "SNAP_DIR": str(snap_dir)},
@@ -195,7 +195,7 @@ def test_seal_snapshot_cancels_queued_descendants_after_crawl_max_size():
     from archivebox.crawls.models import Crawl
     from archivebox.core.models import Snapshot
     from archivebox.services.snapshot_service import SnapshotService
-    from abx_dl.events import SnapshotCompletedEvent
+    from abx_dl.events import SnapshotCompletedEvent, SnapshotEvent
     from abx_dl.orchestrator import create_bus
 
     crawl = Crawl.objects.create(
@@ -231,17 +231,25 @@ def test_seal_snapshot_cancels_queued_descendants_after_crawl_max_size():
     )
 
     bus = create_bus(name=f"test_snapshot_limit_cancel_{str(crawl.id).replace('-', '_')}")
-    service = SnapshotService(bus, crawl_id=str(crawl.id))
+    SnapshotService(bus, crawl_id=str(crawl.id))
     try:
 
         async def emit_event() -> None:
-            await service.on_SnapshotCompletedEvent(
-                SnapshotCompletedEvent(
+            snapshot_event = bus.emit(
+                SnapshotEvent(
                     url=root.url,
                     snapshot_id=str(root.id),
                     output_dir=str(root.output_dir),
                 ),
             )
+            await snapshot_event.now()
+            completed_event = SnapshotCompletedEvent(
+                url=root.url,
+                snapshot_id=str(root.id),
+                output_dir=str(root.output_dir),
+            )
+            completed_event.event_parent_id = snapshot_event.event_id
+            await bus.emit(completed_event).now()
 
         asyncio.run(emit_event())
     finally:

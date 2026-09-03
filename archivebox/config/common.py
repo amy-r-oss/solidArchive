@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 from urllib.parse import quote, urlparse
 
-from abx_plugins.plugins.base.utils import BASE_CONFIG_PATH, build_config_model, resolve_plugin_configs
+from abx_plugins.plugins.base.utils import build_config_model
 from django.db import DatabaseError
 from pydantic import BaseModel, Field, PrivateAttr, create_model, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -441,6 +441,7 @@ class ArchivingConfig(BaseConfigSet):
         default="",
         description="Comma-separated plugin selection for this run. Empty means use enabled plugin defaults.",
     )
+    PARSER: str = Field(default="auto", description="Parser used to read the submitted Crawl input document.")
 
     ONLY_NEW: bool = Field(default=True)
     INDEX_ONLY: bool = Field(default=False)
@@ -601,13 +602,9 @@ def _explicit_plugin_enabled_keys(config: Mapping[str, object]) -> set[str]:
 
 
 def _discover_plugin_config_schemas() -> PluginSchemaDocuments:
-    from archivebox.plugins.discovery import discover_plugin_configs
+    from archivebox.plugins.discovery import get_plugin_config_resolver
 
-    schemas: PluginSchemaDocuments = {}
-    if BASE_CONFIG_PATH.exists():
-        schemas["base"] = json.loads(BASE_CONFIG_PATH.read_text())
-    schemas.update(discover_plugin_configs())
-    return schemas
+    return get_plugin_config_resolver().schemas
 
 
 def _plugin_config_properties(plugin_schemas: PluginSchemaDocuments) -> dict[str, dict[str, Any]]:
@@ -856,13 +853,11 @@ class ArchiveBoxBaseConfig(
             disabled_plugins = [plugin_name for plugin_name, enabled_key in enabled_config_keys.items() if not getattr(self, enabled_key)]
         selected_plugin_roots = plugin_names
         if selected_plugin_roots:
-            from abx_dl.models import discover_plugins, filter_plugins
+            from archivebox.plugins.discovery import get_plugin_catalog
 
             selected_plugins = set(
-                filter_plugins(
-                    discover_plugins(runtime="archivebox"),
+                get_plugin_catalog().select(
                     sorted(selected_plugin_roots),
-                    include_providers=True,
                     disabled_names=disabled_plugins,
                 ),
             )
@@ -1195,7 +1190,6 @@ def get_config(
 
     explicit_plugin_enabled_keys: set[str] = set()
     if resolve_plugins:
-        plugin_schemas = {plugin_name: schema for plugin_name, schema in PLUGIN_CONFIG_SCHEMAS.items() if isinstance(schema, dict)}
         plugin_global_config = {key: str(value) if isinstance(value, Path) else value for key, value in config_data.items()}
         crawl_selected_plugins = crawl_config_base and bool(_normalize_plugins_config_value(dict(crawl.config or {}).get("PLUGINS")))
         # A frozen crawl-level PLUGINS selector is the exact extractor set for
@@ -1219,8 +1213,9 @@ def get_config(
                 **_plugin_user_config(_plugin_input_config(file_config)),
                 **plugin_user_config,
             }
-        plugin_sections = resolve_plugin_configs(
-            plugin_schemas,
+        from archivebox.plugins.discovery import get_plugin_config_resolver
+
+        plugin_sections = get_plugin_config_resolver().resolve(
             global_config=plugin_global_config,
             user_config=plugin_user_config,
             environ={},

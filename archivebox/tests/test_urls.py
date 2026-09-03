@@ -15,22 +15,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.django_db
-def test_archiveresult_relpath_uses_plugin_result_that_owns_output(admin_user):
+def test_archiveresult_relpath_uses_sibling_hook_that_owns_output(admin_user):
     from archivebox.core.models import ArchiveResult, Snapshot
     from archivebox.core.views import _resolve_archiveresult_relpath
     from archivebox.crawls.models import Crawl
 
     crawl = Crawl.objects.create(urls="https://example.com", created_by=admin_user)
     snapshot = Snapshot.objects.create(url="https://example.com", crawl=crawl)
+    ArchiveResult.objects.create(
+        snapshot=snapshot,
+        plugin="screenshot",
+        hook_name="on_Snapshot__archivebox_browser_extension_upload",
+        status=ArchiveResult.StatusChoices.SUCCEEDED,
+        output_files={"browser.png": {"size": 7}},
+    )
     server_result = ArchiveResult.objects.create(
         snapshot=snapshot,
         plugin="screenshot",
         hook_name="on_Snapshot__50_screenshot",
         status=ArchiveResult.StatusChoices.SUCCEEDED,
-        output_files={
-            "browser.png": {"size": 7},
-            "screenshot.png": {"size": 6, "root_relative": True},
-        },
+        output_files={"screenshot.png": {"size": 6, "root_relative": True}},
     )
 
     resolved_path, result = _resolve_archiveresult_relpath(snapshot, "screenshot/screenshot.png")
@@ -134,6 +138,8 @@ def test_static_html_and_markdown_preview_images_rewrite_to_captured_responses(t
     assert "ETag" not in response.headers
     assert "max-age=60" in response.headers["Cache-Control"]
     assert b"archivebox-static-html-preview-style" in response.content
+    assert b"width: min(100%, 72rem)" in response.content
+    assert b"min-height: 100vh" in response.content
     assert b"img:not([width]):not([height])" in response.content
     assert b"a > img:not([width]):not([height])" in response.content
     assert b'src="../responses/all/20260722T061544__GET__https_3A_2F_2Fsweeting.me_2Fimages_2Ftwitter.png"' in response.content
@@ -163,6 +169,8 @@ def test_static_html_and_markdown_preview_images_rewrite_to_captured_responses(t
     assert "ETag" not in response.headers
     assert "max-age=60" in response.headers["Cache-Control"]
     assert b"archivebox-static-html-preview-style" in response.content
+    assert b"width: min(100%, 72rem)" in response.content
+    assert b"min-height: 100vh" in response.content
     assert b'src="../responses/all/20260722T061544__GET__https_3A_2F_2Fsweeting.me_2Fimages_2Ftwitter.png"' in response.content
 
 

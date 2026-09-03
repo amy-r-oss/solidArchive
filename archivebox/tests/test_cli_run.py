@@ -240,7 +240,7 @@ class TestRunWithArchiveResult:
     """Tests for `archivebox run` with ArchiveResult input."""
 
     @pytest.mark.django_db(transaction=True)
-    def test_run_treats_no_id_archiveresult_request_as_plugin_work(self, initialized_archive):
+    def test_run_treats_no_id_archiveresult_as_parent_snapshot_plugin_request(self, initialized_archive):
         import json
 
         from archivebox.core.models import ArchiveResult
@@ -286,10 +286,11 @@ class TestRunWithArchiveResult:
             )
         assert len(rows) == 1
         assert rows[0][0] != missing_hook
+        assert rows[0][0].startswith("on_Snapshot__")
         assert rows[0][1] in ArchiveResult.FINAL_STATES
 
     def test_run_requeues_failed_archiveresult(self, initialized_archive):
-        """Run re-queues a failed ArchiveResult."""
+        """Run uses a failed ArchiveResult as a parent Snapshot/plugin reference."""
         url = create_test_url()
 
         # Create snapshot and archive result
@@ -901,43 +902,6 @@ class TestRecoverOrchestratorState:
         assert sealed_snapshot.status == Snapshot.StatusChoices.SEALED
         assert sealed_snapshot.retry_at is not None
 
-    def test_recover_orchestrator_state_requeues_backoff_archiveresults(self):
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.core.recovery_util import recover_orchestrator_state
-        from archivebox.crawls.models import Crawl
-
-        crawl = Crawl.objects.create(
-            urls="https://example.com",
-            created_by_id=get_or_create_system_user_pk(),
-            status=Crawl.StatusChoices.SEALED,
-            retry_at=None,
-        )
-        snapshot = Snapshot.objects.create(
-            url="https://example.com",
-            crawl=crawl,
-            status=Snapshot.StatusChoices.SEALED,
-            retry_at=None,
-        )
-        result = ArchiveResult.objects.create(
-            snapshot=snapshot,
-            plugin="search_backend_sqlite",
-            hook_name="on_Snapshot__90_index_sqlite",
-            status=ArchiveResult.StatusChoices.BACKOFF,
-        )
-
-        recovered = recover_orchestrator_state()
-
-        result.refresh_from_db()
-        snapshot.refresh_from_db()
-        crawl.refresh_from_db()
-
-        assert recovered["archiveresults_backoff"] == 1
-        assert result.status == ArchiveResult.StatusChoices.QUEUED
-        assert snapshot.status == Snapshot.StatusChoices.SEALED
-        assert snapshot.retry_at is not None
-        assert crawl.status == Crawl.StatusChoices.SEALED
-
     def test_recover_orchestrator_state_leaves_due_queued_snapshot_for_runner_even_with_final_results(self):
         from archivebox.base_models.models import get_or_create_system_user_pk
         from archivebox.core.models import ArchiveResult, Snapshot
@@ -976,6 +940,7 @@ class TestRecoverOrchestratorState:
         assert crawl.status == Crawl.StatusChoices.QUEUED
         assert crawl.retry_at is not None
 
+    @pytest.mark.django_db(transaction=True)
     def test_recover_orchestrator_state_leaves_stale_queued_final_rows_for_runner(self):
         from datetime import timedelta
 
@@ -985,12 +950,13 @@ class TestRecoverOrchestratorState:
         from archivebox.core.models import ArchiveResult, Snapshot
         from archivebox.core.recovery_util import recover_orchestrator_state
         from archivebox.crawls.models import Crawl
-        from archivebox.services.runner import run_due_crawl, run_due_snapshot
+        from archivebox.services.runner import run_due_snapshot
 
         old = timezone.now() - timedelta(hours=13)
         crawl = Crawl.objects.create(
             urls="https://example.com",
             created_by_id=get_or_create_system_user_pk(),
+            config={"PLUGINS": "__archivebox_test_no_plugins__"},
             status=Crawl.StatusChoices.QUEUED,
             retry_at=old,
         )
@@ -1029,16 +995,11 @@ class TestRecoverOrchestratorState:
 
         assert snapshot.status == Snapshot.StatusChoices.SEALED
         assert snapshot.retry_at is None
-        assert crawl.status == Crawl.StatusChoices.QUEUED
-        assert crawl.retry_at == old
-
-        assert run_due_crawl(crawl, lock_seconds=60) is True
-        crawl.refresh_from_db()
-
         assert crawl.status == Crawl.StatusChoices.SEALED
         assert crawl.retry_at is None
 
-    def test_run_due_snapshot_seals_queued_snapshot_with_final_results(self):
+    @pytest.mark.django_db(transaction=True)
+    def test_run_due_snapshot_runs_snapshot_without_consulting_final_result_rows(self):
         from django.utils import timezone
 
         from archivebox.base_models.models import get_or_create_system_user_pk
@@ -1049,6 +1010,7 @@ class TestRecoverOrchestratorState:
         crawl = Crawl.objects.create(
             urls="https://example.com",
             created_by_id=get_or_create_system_user_pk(),
+            config={"PLUGINS": "__archivebox_test_no_plugins__"},
             status=Crawl.StatusChoices.STARTED,
             retry_at=timezone.now(),
         )
@@ -1071,74 +1033,6 @@ class TestRecoverOrchestratorState:
         assert snapshot.status == Snapshot.StatusChoices.SEALED
         assert snapshot.retry_at is None
         assert snapshot.downloaded_at is not None
-
-    def test_create_pending_archiveresults_creates_one_plugin_row_not_hook_rows(self):
-        from django.utils import timezone
-
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.crawls.models import Crawl
-
-        crawl = Crawl.objects.create(
-            urls="https://example.com",
-            created_by_id=get_or_create_system_user_pk(),
-            status=Crawl.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-        )
-        snapshot = Snapshot.objects.create(
-            url="https://example.com",
-            crawl=crawl,
-            status=Snapshot.StatusChoices.QUEUED,
-            retry_at=timezone.now(),
-        )
-
-        results = snapshot.create_pending_archiveresults(
-            hooks=[
-                ("chrome", "on_Snapshot__00_chrome_launch.daemon.bg"),
-                ("chrome", "on_Snapshot__01_chrome_tab.daemon.bg"),
-                ("chrome", "on_Snapshot__30_chrome_navigate"),
-                ("title", "on_Snapshot__54_title"),
-            ],
-        )
-
-        assert [(result.plugin, result.hook_name) for result in results] == [("chrome", ""), ("title", "")]
-        assert ArchiveResult.objects.filter(snapshot=snapshot).count() == 2
-
-    def test_snapshot_hooks_for_pending_archiveresults_respects_disabled_plugins_when_plugins_empty(self):
-        from django.utils import timezone
-
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import Snapshot
-        from archivebox.crawls.models import Crawl
-        from archivebox.services.runner import snapshot_hooks_for_pending_archiveresults
-
-        crawl = Crawl.objects.create(
-            urls="https://example.com",
-            created_by_id=get_or_create_system_user_pk(),
-            config={
-                "CLAUDECHROME_ENABLED": False,
-                "CLAUDECODEEXTRACT_ENABLED": False,
-                "CLAUDECODECLEANUP_ENABLED": False,
-                "SEARCH_BACKEND_SQLITE_ENABLED": False,
-            },
-            status=Crawl.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-        )
-        snapshot = Snapshot.objects.create(
-            url="https://example.com",
-            crawl=crawl,
-            status=Snapshot.StatusChoices.QUEUED,
-            retry_at=timezone.now(),
-        )
-
-        hooks = snapshot_hooks_for_pending_archiveresults(snapshot)
-        queued_plugins = {plugin for plugin, _hook_name in hooks}
-
-        assert "title" in queued_plugins
-        assert "claudechrome" not in queued_plugins
-        assert "claudecodeextract" not in queued_plugins
-        assert "claudecodecleanup" not in queued_plugins
-        assert "search_backend_sqlite" not in queued_plugins
 
     def test_run_due_snapshot_pauses_child_when_parent_is_paused(self):
         from django.utils import timezone
@@ -1174,7 +1068,7 @@ class TestRecoverOrchestratorState:
         result.refresh_from_db()
         assert snapshot.status == Snapshot.StatusChoices.PAUSED
         assert snapshot.retry_at == RETRY_AT_MAX
-        assert result.status == ArchiveResult.StatusChoices.PAUSED
+        assert result.status == ArchiveResult.StatusChoices.QUEUED
         assert snapshot.archiveresult_set.count() == 1
 
     def test_parent_status_transitions_schedule_children_to_follow_parent_status(self):
@@ -1232,7 +1126,7 @@ class TestRecoverOrchestratorState:
         sealed_started_child.refresh_from_db()
         assert paused_child.status == Snapshot.StatusChoices.PAUSED
         assert paused_child.retry_at == RETRY_AT_MAX
-        assert paused_result.status == ArchiveResult.StatusChoices.PAUSED
+        assert paused_result.status == ArchiveResult.StatusChoices.QUEUED
         assert sealed_child.status == Snapshot.StatusChoices.PAUSED
         assert sealed_child.retry_at is not None
         assert sealed_child.retry_at <= timezone.now()
@@ -1674,153 +1568,6 @@ class TestRecoverOrchestratorState:
         assert not legacy_dir.exists()
 
     @pytest.mark.django_db(transaction=True)
-    def test_run_due_snapshot_runs_queued_plugin_after_fs_migration(self):
-        from django.utils import timezone
-
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.crawls.models import Crawl
-        from archivebox.services.runner import run_due_snapshot
-
-        crawl = Crawl.objects.create(
-            urls="https://example.com",
-            created_by_id=get_or_create_system_user_pk(),
-            status=Crawl.StatusChoices.SEALED,
-            retry_at=None,
-        )
-        snapshot = Snapshot.objects.create(
-            url="https://example.com",
-            crawl=crawl,
-            status=Snapshot.StatusChoices.SEALED,
-            retry_at=timezone.now(),
-        )
-        Snapshot.objects.filter(pk=snapshot.pk).update(fs_version="0.9.0")
-        snapshot.refresh_from_db()
-        snapshot.output_dir.mkdir(parents=True, exist_ok=True)
-        title_dir = snapshot.output_dir / "title"
-        title_dir.mkdir(parents=True, exist_ok=True)
-        (title_dir / "title.txt").write_text("Example Domain\n", encoding="utf-8")
-        result = ArchiveResult.objects.create(
-            snapshot=snapshot,
-            plugin="search_backend_sqlite",
-            hook_name="on_Snapshot__90_index_sqlite",
-            status=ArchiveResult.StatusChoices.QUEUED,
-        )
-
-        assert run_due_snapshot(snapshot, lock_seconds=60) is True
-
-        snapshot.refresh_from_db()
-        result.refresh_from_db()
-        assert snapshot.fs_version == Snapshot._fs_current_version()
-        assert result.status in ArchiveResult.FINAL_STATES
-        assert result.status != ArchiveResult.StatusChoices.QUEUED
-        assert result.start_ts is not None
-        assert result.end_ts is not None
-
-    @pytest.mark.django_db(transaction=True)
-    def test_run_due_snapshot_runs_plugin_for_obsolete_queued_hook_name(self):
-        from django.utils import timezone
-
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.crawls.models import Crawl
-        from archivebox.services.runner import run_due_snapshot
-
-        crawl = Crawl.objects.create(
-            urls="https://example.com",
-            created_by_id=get_or_create_system_user_pk(),
-            status=Crawl.StatusChoices.SEALED,
-            retry_at=None,
-        )
-        snapshot = Snapshot.objects.create(
-            url="https://example.com",
-            crawl=crawl,
-            status=Snapshot.StatusChoices.SEALED,
-            retry_at=timezone.now(),
-        )
-        result = ArchiveResult.objects.create(
-            snapshot=snapshot,
-            plugin="singlefile",
-            hook_name="on_Snapshot__50_singlefile.py",
-            status=ArchiveResult.StatusChoices.QUEUED,
-        )
-
-        assert run_due_snapshot(snapshot, lock_seconds=60) is True
-
-        result.refresh_from_db()
-        snapshot.refresh_from_db()
-        assert result.status in ArchiveResult.FINAL_STATES
-        assert result.hook_name != "on_Snapshot__50_singlefile.py"
-        assert snapshot.retry_at is None
-
-    @pytest.mark.django_db(transaction=True)
-    def test_run_due_snapshot_skips_disabled_queued_plugins_and_seals_started_snapshot(self):
-        from django.utils import timezone
-
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.crawls.models import Crawl
-        from archivebox.services.runner import run_due_snapshot
-
-        crawl = Crawl.objects.create(
-            urls="https://example.com",
-            created_by_id=get_or_create_system_user_pk(),
-            config={
-                "CLAUDECHROME_ENABLED": False,
-                "CLAUDECODEEXTRACT_ENABLED": False,
-                "CLAUDECODECLEANUP_ENABLED": False,
-                "SEARCH_BACKEND_SQLITE_ENABLED": False,
-            },
-            status=Crawl.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-        )
-        snapshot = Snapshot.objects.create(
-            url="https://example.com",
-            crawl=crawl,
-            status=Snapshot.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-            downloaded_at=timezone.now(),
-        )
-        ArchiveResult.objects.create(
-            snapshot=snapshot,
-            plugin="title",
-            hook_name="on_Snapshot__01_title",
-            status=ArchiveResult.StatusChoices.SUCCEEDED,
-            output_str="Example Domain",
-        )
-        stale_results = [
-            ArchiveResult.objects.create(
-                snapshot=snapshot,
-                plugin=plugin,
-                hook_name=hook_name,
-                status=ArchiveResult.StatusChoices.QUEUED,
-            )
-            for plugin, hook_name in (
-                ("claudechrome", "on_Snapshot__47_claudechrome"),
-                ("claudecodeextract", "on_Snapshot__58_claudecodeextract"),
-                ("claudecodecleanup", "on_Snapshot__92_claudecodecleanup"),
-                ("search_backend_sqlite", "on_Snapshot__90_index_sqlite"),
-            )
-        ]
-        stale_result_ids = [result.id for result in stale_results]
-        stale_plugins = [result.plugin for result in stale_results]
-
-        assert run_due_snapshot(snapshot, lock_seconds=60) is True
-
-        snapshot.refresh_from_db()
-        assert snapshot.status == Snapshot.StatusChoices.SEALED
-        assert snapshot.retry_at is None
-        assert not snapshot.archiveresult_set.filter(
-            plugin__in=stale_plugins,
-            status=ArchiveResult.StatusChoices.QUEUED,
-        ).exists()
-        for result in ArchiveResult.objects.filter(id__in=stale_result_ids):
-            assert result.status == ArchiveResult.StatusChoices.SKIPPED
-            assert result.start_ts is not None
-            assert result.end_ts is not None
-            assert "disabled by this Snapshot/Crawl config" in result.output_str
-
-    @pytest.mark.django_db(transaction=True)
     @pytest.mark.timeout(300)
     @pytest.mark.parametrize("chrome_isolation", ["crawl", "snapshot"])
     def test_resume_queued_chrome_navigate_reruns_background_prerequisites(
@@ -1829,10 +1576,7 @@ class TestRecoverOrchestratorState:
         recursive_test_site,
         chrome_isolation,
     ):
-        from pathlib import Path
-
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.machine.models import Process
+        from archivebox.core.models import ArchiveResult
         from archivebox.tests.test_orm_helpers import use_archivebox_db
 
         env = cli_env(disable_extractors=True)
@@ -1870,19 +1614,13 @@ class TestRecoverOrchestratorState:
         snapshot_id = navigate_record["snapshot_id"]
 
         with use_archivebox_db(initialized_archive):
-            snapshot = Snapshot.objects.get(id=snapshot_id)
-            tab_processes = [
-                process
-                for process in Process.objects.filter(pwd=str(Path(snapshot.output_dir) / "chrome")).order_by("-started_at")
-                if Path(process.hook_script_name or "").stem == "on_Snapshot__01_chrome_tab.daemon.bg"
-            ]
-            assert tab_processes
-            first_tab_process_id = tab_processes[0].id
-            plugin_result = ArchiveResult.objects.get(
+            tab_result = ArchiveResult.objects.get(
                 snapshot_id=snapshot_id,
                 plugin="chrome",
+                hook_name="on_Snapshot__01_chrome_tab.daemon.bg",
             )
-            assert plugin_result.hook_name == "on_Snapshot__30_chrome_navigate"
+            first_tab_process_id = tab_result.process_id
+            assert first_tab_process_id is not None
 
         update_process = run_archivebox_cmd(
             ["archiveresult", "update", "--status=queued"],
@@ -1916,18 +1654,18 @@ class TestRecoverOrchestratorState:
             navigate_result = ArchiveResult.objects.get(
                 snapshot_id=snapshot_id,
                 plugin="chrome",
+                hook_name="on_Snapshot__30_chrome_navigate",
             )
-            snapshot = Snapshot.objects.get(id=snapshot_id)
-            tab_processes = [
-                process
-                for process in Process.objects.filter(pwd=str(Path(snapshot.output_dir) / "chrome")).order_by("-started_at")
-                if Path(process.hook_script_name or "").stem == "on_Snapshot__01_chrome_tab.daemon.bg"
-            ]
+            tab_result = ArchiveResult.objects.get(
+                snapshot_id=snapshot_id,
+                plugin="chrome",
+                hook_name="on_Snapshot__01_chrome_tab.daemon.bg",
+            )
 
         assert run_process.returncode == 0
         assert navigate_result.status == ArchiveResult.StatusChoices.SUCCEEDED
-        assert navigate_result.hook_name == "on_Snapshot__30_chrome_navigate"
-        assert tab_processes[0].id != first_tab_process_id
+        assert tab_result.process_id is not None
+        assert tab_result.process_id != first_tab_process_id
 
     def test_recover_orchestrator_state_ignores_sealed_downloaded_snapshot_without_results(self):
         from django.utils import timezone
@@ -1962,6 +1700,7 @@ class TestRecoverOrchestratorState:
         assert crawl.status == Crawl.StatusChoices.SEALED
         assert crawl.retry_at is None
 
+    @pytest.mark.django_db(transaction=True)
     def test_recover_orchestrator_state_unlocks_started_snapshot_with_final_results_for_runner(self):
         from archivebox.base_models.models import get_or_create_system_user_pk
         from archivebox.core.models import ArchiveResult, Snapshot
@@ -1972,6 +1711,7 @@ class TestRecoverOrchestratorState:
         crawl = Crawl.objects.create(
             urls="https://example.com",
             created_by_id=get_or_create_system_user_pk(),
+            config={"PLUGINS": "__archivebox_test_no_plugins__"},
             status=Crawl.StatusChoices.STARTED,
             retry_at=None,
         )
@@ -2062,7 +1802,7 @@ class TestRunDueCrawlState:
         assert crawl.retry_at == now
         assert crawl.snapshot_set.count() == 0
 
-    def test_maintenance_only_runner_ignores_disabled_queued_results_on_sealed_snapshots(self):
+    def test_maintenance_only_runner_clears_snapshot_tick_without_scheduling_archive_results(self):
         from django.utils import timezone
 
         from archivebox.base_models.models import get_or_create_system_user_pk
@@ -2096,7 +1836,7 @@ class TestRunDueCrawlState:
         result.refresh_from_db()
         assert snapshot.status == Snapshot.StatusChoices.SEALED
         assert snapshot.fs_version == Snapshot._fs_current_version()
-        assert snapshot.retry_at is not None
+        assert snapshot.retry_at is None
         assert result.status == ArchiveResult.StatusChoices.QUEUED
 
     def test_snapshot_start_writes_short_future_lease(self):
@@ -2119,137 +1859,12 @@ class TestRunDueCrawlState:
             retry_at=timezone.now(),
         )
 
-        snapshot.sm.tick()
+        snapshot.advance_lifecycle()
         snapshot.refresh_from_db()
 
         assert snapshot.status == Snapshot.StatusChoices.STARTED
         assert snapshot.retry_at is not None
         assert snapshot.retry_at > timezone.now()
-
-    def test_abandoned_started_snapshot_results_are_reset_locally_for_resume(self):
-        from django.utils import timezone
-
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.crawls.models import Crawl
-
-        crawl = Crawl.objects.create(
-            urls="https://example.com",
-            created_by_id=get_or_create_system_user_pk(),
-            status=Crawl.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-        )
-        snapshot = Snapshot.objects.create(
-            url="https://example.com",
-            crawl=crawl,
-            status=Snapshot.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-        )
-        abandoned = ArchiveResult.objects.create(
-            snapshot=snapshot,
-            plugin="title",
-            hook_name="on_Snapshot__01_title",
-            status=ArchiveResult.StatusChoices.STARTED,
-            output_str="partial output should be cleared",
-            output_files={"partial.txt": {"size": 12}},
-            output_size=12,
-            start_ts=timezone.now(),
-        )
-        queued = ArchiveResult.objects.create(
-            snapshot=snapshot,
-            plugin="wget",
-            hook_name="on_Snapshot__40_wget",
-            status=ArchiveResult.StatusChoices.QUEUED,
-        )
-        finished = ArchiveResult.objects.create(
-            snapshot=snapshot,
-            plugin="favicon",
-            hook_name="on_Snapshot__01_favicon",
-            status=ArchiveResult.StatusChoices.SUCCEEDED,
-            output_str="keep me",
-            output_files={"favicon.ico": {"size": 1}},
-            output_size=1,
-        )
-
-        snapshot.reset_abandoned_results()
-
-        abandoned.refresh_from_db()
-        queued.refresh_from_db()
-        finished.refresh_from_db()
-
-        assert abandoned.status == ArchiveResult.StatusChoices.QUEUED
-        assert abandoned.output_str == ""
-        assert abandoned.output_files == {}
-        assert abandoned.output_size == 0
-        assert queued.status == ArchiveResult.StatusChoices.QUEUED
-        assert finished.status == ArchiveResult.StatusChoices.SUCCEEDED
-        assert finished.output_str == "keep me"
-        assert finished.output_files == {"favicon.ico": {"size": 1}}
-
-    def test_finished_parser_result_projects_children_before_resume_seals_snapshot(self):
-        from importlib.resources import files
-        from pathlib import Path
-
-        from django.utils import timezone
-
-        from archivebox.base_models.models import get_or_create_system_user_pk
-        from archivebox.core.models import ArchiveResult, Snapshot
-        from archivebox.crawls.models import Crawl
-        from archivebox.plugins.hooks import extract_records_from_process, run_hook
-        from archivebox.services.runner import run_due_snapshot
-
-        crawl = Crawl.objects.create(
-            urls="Plain text import containing https://example.org/\n",
-            max_depth=1,
-            created_by_id=get_or_create_system_user_pk(),
-            status=Crawl.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-        )
-        root = Snapshot.objects.create(
-            url=Snapshot.INTERNAL_INPUT_URL,
-            crawl=crawl,
-            depth=0,
-            status=Snapshot.StatusChoices.STARTED,
-            retry_at=timezone.now(),
-        )
-        staticfile_dir = root.output_dir / "staticfile"
-        parser_dir = root.output_dir / "parse_txt_urls"
-        staticfile_dir.mkdir(parents=True, exist_ok=True)
-        parser_dir.mkdir(parents=True, exist_ok=True)
-        (staticfile_dir / "input.txt").write_text(
-            "Plain text import containing https://example.org/\n",
-            encoding="utf-8",
-        )
-        hook_path = Path(str(files("abx_plugins.plugins.parse_txt_urls").joinpath("on_Snapshot__71_parse_txt_urls.py")))
-        process = run_hook(
-            hook_path,
-            parser_dir,
-            config={"ABXPKG_LIB_DIR": str(root.output_dir.parent.parent / "lib"), "SNAP_DIR": str(root.output_dir)},
-            timeout=30,
-            url=root.url,
-            depth=root.depth,
-            snapshot_id=str(root.id),
-        )
-        process.refresh_from_db()
-        assert process.exit_code == 0, process.stderr
-        result_record = next(record for record in extract_records_from_process(process) if record.get("type") == "ArchiveResult")
-        ArchiveResult.objects.create(
-            snapshot=root,
-            process=process,
-            plugin=result_record["plugin"],
-            hook_name=result_record["hook_name"],
-            status=result_record["status"],
-            output_str=result_record.get("output_str", ""),
-            output_files={"urls.jsonl": {"size": (parser_dir / "urls.jsonl").stat().st_size}},
-        )
-
-        assert run_due_snapshot(root, lock_seconds=60)
-
-        root.refresh_from_db()
-        child = Snapshot.objects.get(crawl=crawl, url="https://example.org/")
-        assert root.status == Snapshot.StatusChoices.SEALED
-        assert child.parent_snapshot_id == root.id
-        assert child.status == Snapshot.StatusChoices.QUEUED
 
     def test_due_started_snapshot_with_live_child_extends_lease_without_reset(self):
         import os
@@ -2589,7 +2204,7 @@ class TestRecoverOrchestratorStateRedFailureModes:
         assert crawl.status == Crawl.StatusChoices.STARTED
         assert crawl.retry_at == future
 
-    def test_recovery_requeues_started_archiveresult_without_process(self):
+    def test_recovery_closes_interrupted_result_and_requeues_parent_snapshot(self):
         from archivebox.base_models.models import get_or_create_system_user_pk
         from archivebox.core.models import ArchiveResult, Snapshot
         from archivebox.core.recovery_util import recover_orchestrator_state
@@ -2617,9 +2232,12 @@ class TestRecoverOrchestratorStateRedFailureModes:
         recover_orchestrator_state()
 
         result.refresh_from_db()
-        assert result.status == ArchiveResult.StatusChoices.QUEUED
+        snapshot.refresh_from_db()
+        assert result.status == ArchiveResult.StatusChoices.FAILED
+        assert snapshot.status == Snapshot.StatusChoices.STARTED
+        assert snapshot.retry_at is not None
 
-    def test_recovery_requeues_started_archiveresult_with_exited_process(self):
+    def test_recovery_closes_started_archiveresult_with_exited_process(self):
         from django.utils import timezone
 
         from archivebox.base_models.models import get_or_create_system_user_pk
@@ -2658,9 +2276,11 @@ class TestRecoverOrchestratorStateRedFailureModes:
         recover_orchestrator_state()
 
         result.refresh_from_db()
-        assert result.status == ArchiveResult.StatusChoices.QUEUED
+        snapshot.refresh_from_db()
+        assert result.status == ArchiveResult.StatusChoices.FAILED
+        assert snapshot.retry_at is not None
 
-    def test_recovery_requeues_sealed_snapshot_started_result_with_exited_process_result_too(self):
+    def test_recovery_does_not_reopen_sealed_snapshot_for_interrupted_result_projection(self):
         from django.utils import timezone
 
         from archivebox.base_models.models import get_or_create_system_user_pk
@@ -2706,10 +2326,10 @@ class TestRecoverOrchestratorStateRedFailureModes:
         snapshot.refresh_from_db()
         result.refresh_from_db()
         assert snapshot.status == Snapshot.StatusChoices.SEALED
-        assert snapshot.retry_at is not None
-        assert result.status == ArchiveResult.StatusChoices.QUEUED
+        assert snapshot.retry_at is None
+        assert result.status == ArchiveResult.StatusChoices.FAILED
 
-    def test_recovery_requeues_started_snapshot_result_before_unlocking_snapshot(self):
+    def test_recovery_closes_result_projection_before_unlocking_snapshot(self):
         from archivebox.base_models.models import get_or_create_system_user_pk
         from archivebox.core.models import ArchiveResult, Snapshot
         from archivebox.core.recovery_util import recover_orchestrator_state
@@ -2738,7 +2358,7 @@ class TestRecoverOrchestratorStateRedFailureModes:
 
         snapshot.refresh_from_db()
         result.refresh_from_db()
-        assert result.status == ArchiveResult.StatusChoices.QUEUED
+        assert result.status == ArchiveResult.StatusChoices.FAILED
         assert snapshot.retry_at is not None
 
     def test_crawl_runner_load_run_state_does_not_return_future_retry_snapshots(self):
@@ -3005,7 +2625,7 @@ class TestRecoverOrchestratorStateRedFailureModes:
             modified_at=now + timedelta(seconds=1),
         )
 
-        snapshot.sm.seal()
+        snapshot.seal()
         snapshot.refresh_from_db()
         assert snapshot.status == Snapshot.StatusChoices.SEALED
         assert snapshot.retry_at is None

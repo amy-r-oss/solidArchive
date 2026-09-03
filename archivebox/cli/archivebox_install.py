@@ -17,12 +17,12 @@ def _resolve_install_targets(
     requested_names: tuple[str, ...],
 ) -> tuple[list[str], list[str]]:
     """Resolve plugin names and declared binary aliases, leaving unknown tokens raw."""
-    from abx_dl.models import discover_plugins, filter_plugins
+    from archivebox.plugins.discovery import get_plugin_catalog
 
-    plugins = discover_plugins(runtime="archivebox")
-    plugin_names_by_lower = {plugin_name.lower(): plugin_name for plugin_name in plugins}
+    catalog = get_plugin_catalog()
+    plugin_names_by_lower = {plugin_name.lower(): plugin_name for plugin_name in catalog}
     plugin_names_by_binary_alias: dict[str, set[str]] = {}
-    for plugin_name, plugin in plugins.items():
+    for plugin_name, plugin in catalog.items():
         for required_binary in plugin.config.required_binaries:
             aliases = {required_binary.name.lower()}
             template_match = re.fullmatch(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", required_binary.name)
@@ -47,14 +47,14 @@ def _resolve_install_targets(
         else:
             raw_binary_names.append(name)
 
-    selected_plugins = filter_plugins(plugins, requested_plugins, include_providers=True) if requested_plugins else {}
+    selected_plugins = catalog.select(requested_plugins) if requested_plugins else catalog.select([])
     selected_plugin_names = {name.lower() for name in selected_plugins}
     raw_binary_names = [name for name in raw_binary_names if name.lower() not in selected_plugin_names]
     return sorted(selected_plugins), sorted(set(raw_binary_names))
 
 
 def _install_raw_binary_names(binary_names: list[str], binproviders: str) -> None:
-    """Install user-requested standalone binaries through the Binary state machine."""
+    """Install user-requested standalone binaries through the Binary lifecycle."""
     from django.utils import timezone
 
     from archivebox.machine.models import Binary, Machine, _canonical_binary_name
@@ -179,7 +179,7 @@ def install(binaries: tuple[str, ...] = (), binproviders: str = "*", dry_run: bo
         run_install(plugin_names=install_plugin_names or None)
 
     if raw_binary_names:
-        print(f"[+] Running direct binary installer via ArchiveBox binary state machine: {', '.join(raw_binary_names)}")
+        print(f"[+] Running direct binary installer via ArchiveBox binary lifecycle: {', '.join(raw_binary_names)}")
         print()
         _install_raw_binary_names(raw_binary_names, binproviders)
 

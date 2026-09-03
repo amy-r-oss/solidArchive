@@ -6,7 +6,7 @@ Migration tests from 0.8.x to 0.9.x.
 - Crawl model for grouping URLs
 - Seed model (removed in 0.9.x)
 - UUID primary keys for Snapshot
-- Status fields for state machine
+- Status fields for queued lifecycle processing
 - New fields like depth, retry_at, etc.
 """
 
@@ -92,7 +92,7 @@ def convert_legacy_tags_to_uuid(conn: sqlite3.Connection) -> None:
 
 
 @pytest.mark.parametrize("uuid_tags", (False, True), ids=("integer-tags", "uuid-tags"))
-def test_migration_preserves_extended_08_metadata(migration_08_data, uuid_tags):
+def test_migration_preserves_supported_extended_08_metadata(migration_08_data, uuid_tags):
     work_dir, db_path, original_data = migration_08_data
     snapshot = original_data["snapshots"][1]
     parent = original_data["snapshots"][0]
@@ -152,11 +152,12 @@ def test_migration_preserves_extended_08_metadata(migration_08_data, uuid_tags):
         snapshot_row = conn.execute(
             """
             SELECT depth, config, notes, num_uses_failed, num_uses_succeeded,
-                   parent_snapshot_id, current_step, fs_version
+                   parent_snapshot_id, fs_version
             FROM core_snapshot WHERE id = ?
             """,
             (snapshot["id"],),
         ).fetchone()
+        snapshot_columns = {row[1] for row in conn.execute("PRAGMA table_info(core_snapshot)")}
         result_notes = conn.execute(
             "SELECT notes FROM core_archiveresult WHERE id = REPLACE(?, '-', '')",
             (archiveresult["uuid"],),
@@ -174,9 +175,9 @@ def test_migration_preserves_extended_08_metadata(migration_08_data, uuid_tags):
         metadata["num_uses_failed"],
         metadata["num_uses_succeeded"],
         parent["id"],
-        metadata["current_step"],
         metadata["fs_version"],
     )
+    assert "current_step" not in snapshot_columns
     assert result_notes == ("legacy archive result notes",)
     assert migrated_tag == tag_metadata
     assert migrated_counts == expected_counts
@@ -482,7 +483,7 @@ def test_hyphenated_crawl_ids_are_normalized_before_snapshot_saves(migration_08_
     assert hyphenated_crawls == 0
     assert hyphenated_snapshot_refs == 0
 
-    result = run_archivebox_migration_cmd(work_dir, ["update"], timeout=60)
+    result = run_archivebox_migration_cmd(work_dir, ["update", "--migrate-only"], timeout=60)
     output = result.stdout + result.stderr
     assert result.returncode == 0, f"Update failed after migration: {result.stderr}"
     assert "FOREIGN KEY constraint failed" not in output
@@ -898,7 +899,10 @@ def test_update_preserves_legacy_plugin_directory_without_output_files(migration
         (snapshot["id"],),
     ).fetchall()
     conn.close()
-    assert rows == [("", "{}", "")]
+    assert len(rows) == 2
+    assert all(output_str == "" for output_str, _output_files, _hook_name in rows)
+    assert len({hook_name for _output_str, _output_files, hook_name in rows}) == 2
+    assert sum(not hook_name for _output_str, _output_files, hook_name in rows) == 1
 
 
 def test_07_filesystem_hop_preserves_complete_output_tree(tmp_path):

@@ -19,9 +19,9 @@ pytestmark = pytest.mark.django_db(transaction=True)
 
 
 def _snapshot_hook_name(plugin_name: str) -> str:
-    from abx_dl.models import discover_plugins
+    from archivebox.plugins.discovery import get_plugin_catalog
 
-    plugin = discover_plugins().get(plugin_name)
+    plugin = get_plugin_catalog().get(plugin_name)
     assert plugin is not None, f"missing test plugin {plugin_name}"
     hooks = plugin.filter_hooks("Snapshot")
     assert hooks, f"missing Snapshot hooks for {plugin_name}"
@@ -47,15 +47,16 @@ def _run_shipped_snapshot_hook(
     """Run one shipped hook through the production process/result bus services."""
     import asyncio
 
-    from abx_dl.models import discover_plugins
     from abx_dl.services.process_service import ProcessService as HookProcessService
+    from abx_dl.services.archive_result_service import ArchiveResultService as HookArchiveResultService
     from abx_plugins.plugins.base.utils import get_hydrated_required_binaries
     from archivebox.core.models import ArchiveResult
     from archivebox.machine.models import Process
+    from archivebox.plugins.discovery import get_plugin_catalog
     from archivebox.services.archive_result_service import ArchiveResultService
     from archivebox.services.process_service import ProcessService as PersistedProcessService
 
-    discovered_plugin = discover_plugins().get(plugin)
+    discovered_plugin = get_plugin_catalog().get(plugin)
     assert discovered_plugin is not None, f"missing test plugin {plugin}"
     matching_hooks = [hook for hook in discovered_plugin.filter_hooks("Snapshot") if hook.name == hook_name or hook.path.name == hook_name]
     assert len(matching_hooks) == 1, f"missing or ambiguous Snapshot hook {plugin}:{hook_name}"
@@ -76,6 +77,7 @@ def _run_shipped_snapshot_hook(
     output_dir.mkdir(parents=True, exist_ok=True)
     bus = create_bus(name=f"test_real_{plugin}_{snapshot.id}")
     HookProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    HookArchiveResultService(bus, emit_jsonl=False)
     PersistedProcessService(bus)
     ArchiveResultService(bus)
 
@@ -230,7 +232,7 @@ def test_archiveresult_event_retry_updates_existing_hook_row(tmp_path, hermetic_
     _cleanup_machine_process_rows()
 
 
-def test_archiveresult_duplicate_plugin_rows_are_rejected():
+def test_archiveresult_duplicate_hook_rows_are_rejected():
     from django.db import IntegrityError, transaction
     from archivebox.core.models import ArchiveResult
 
@@ -246,45 +248,35 @@ def test_archiveresult_duplicate_plugin_rows_are_rejected():
         ArchiveResult.objects.create(
             snapshot=snapshot,
             plugin="wget",
-            hook_name="on_Snapshot__99_other_wget_hook",
+            hook_name="on_Snapshot__06_wget.finite.bg",
             status=ArchiveResult.StatusChoices.SUCCEEDED,
         )
 
 
-def test_archivewebpage_lifecycle_hooks_project_one_plugin_output():
+def test_archiveresult_event_create_uses_one_result_lookup():
     from abx_dl.events import ArchiveResultEvent
-    from archivebox.core.models import ArchiveResult
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
     from archivebox.services.archive_result_service import _save_archiveresult_event_to_db
 
     snapshot = _create_snapshot()
-    _save_archiveresult_event_to_db(
-        ArchiveResultEvent(
-            snapshot_id=str(snapshot.id),
-            plugin="archivewebpage",
-            hook_name="on_Snapshot__16_archivewebpage_start",
-            status="succeeded",
-            output_str="recording started",
-            output_files=[OutputFile(path="recording.json", extension="json", mimetype="application/json", size=175)],
-        ),
-        None,
-    )
-    _save_archiveresult_event_to_db(
-        ArchiveResultEvent(
-            snapshot_id=str(snapshot.id),
-            plugin="archivewebpage",
-            hook_name="on_Snapshot__65_archivewebpage_stop",
-            status="succeeded",
-            output_str="archivewebpage.wacz",
-            output_files=[OutputFile(path="archivewebpage.wacz", extension="wacz", size=2048)],
-        ),
-        None,
+    event = ArchiveResultEvent(
+        snapshot_id=str(snapshot.id),
+        plugin="review-query-count",
+        hook_name="on_Snapshot__99_review.py",
+        status="failed",
     )
 
-    result = ArchiveResult.objects.get(snapshot=snapshot, plugin="archivewebpage")
-    assert result.hook_name == "on_Snapshot__65_archivewebpage_stop"
-    assert result.output_str == "archivewebpage.wacz"
-    assert set(result.output_files) == {"recording.json", "archivewebpage.wacz"}
-    assert ArchiveResult.objects.filter(snapshot=snapshot, plugin="archivewebpage").count() == 1
+    with CaptureQueriesContext(connection) as queries:
+        _save_archiveresult_event_to_db(event, None)
+
+    result_lookups = [
+        query["sql"]
+        for query in queries
+        if query["sql"].lstrip().upper().startswith("SELECT") and 'FROM "core_archiveresult"' in query["sql"]
+    ]
+    assert len(result_lookups) == 1
 
 
 def test_process_completed_projects_failed_archiveresult_from_shipped_hook(tmp_path, hermetic_lib_dir):
@@ -301,7 +293,6 @@ def test_process_completed_projects_failed_archiveresult_from_shipped_hook(tmp_p
     assert result.status == ArchiveResult.StatusChoices.FAILED
     assert result.process_id == process.id
     assert "Chrome session" in result.output_str
-    assert result.output_str in result.notes
     _cleanup_machine_process_rows()
 
 
@@ -470,20 +461,17 @@ def test_retry_failed_archiveresults_requeues_snapshot_in_queued_state():
     reset_count = snapshot.retry_failed_archiveresults()
 
     snapshot.refresh_from_db()
-    result = ArchiveResult.objects.get(snapshot=snapshot, plugin="chrome")
+    result = ArchiveResult.objects.get(snapshot=snapshot, plugin="chrome", hook_name="on_Snapshot__11_chrome_wait")
     assert reset_count == 1
     assert snapshot.status == Snapshot.StatusChoices.QUEUED
     assert snapshot.retry_at is not None
-    assert snapshot.current_step == 0
-    assert result.status == ArchiveResult.StatusChoices.QUEUED
-    assert result.hook_name == ""
-    assert result.output_str == ""
-    assert result.output_json is None
-    assert result.output_files == {}
-    assert result.output_size == 0
-    assert result.output_mimetypes == ""
-    assert result.start_ts is None
-    assert result.end_ts is None
+    assert snapshot.config["RETRY_PLUGINS"] == ["chrome"]
+    assert "PLUGINS" not in snapshot.config
+    assert result.status == ArchiveResult.StatusChoices.FAILED
+    assert result.output_str == "timed out"
+    assert result.output_files == {"stderr.log": {}}
+    assert result.output_size == 123
+    assert result.output_mimetypes == "text/plain"
     assert ArchiveResult.objects.get(snapshot=snapshot, plugin="ublock").status == ArchiveResult.StatusChoices.SKIPPED
     assert ArchiveResult.objects.get(snapshot=snapshot, plugin="forumdl").status == ArchiveResult.StatusChoices.NORESULTS
     snapshot.refresh_from_db()
@@ -554,14 +542,17 @@ def test_collect_output_metadata_preserves_file_metadata():
 
 
 def test_collect_output_metadata_detects_warc_gz_mimetype(tmp_path):
-    from archivebox.services.archive_result_service import _collect_output_metadata
+    from abx_dl.output_files import OutputManifest
 
     plugin_dir = tmp_path / "wget"
     warc_file = plugin_dir / "warc" / "capture.warc.gz"
     warc_file.parent.mkdir(parents=True, exist_ok=True)
     warc_file.write_bytes(b"warc-bytes")
 
-    output_files, output_size, output_mimetypes = _collect_output_metadata(plugin_dir)
+    manifest = OutputManifest.scan(plugin_dir)
+    output_files = manifest.as_mapping()
+    output_size = manifest.total_size
+    output_mimetypes = ",".join(manifest.mimetypes)
 
     assert output_files["warc/capture.warc.gz"] == {
         "extension": "gz",
