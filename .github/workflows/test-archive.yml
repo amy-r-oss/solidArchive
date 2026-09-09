@@ -45,39 +45,45 @@ jobs:
           fi
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
           chmod 600 "$RUNNER_TEMP/cookies.txt"
+          
+          # NEW OUTPUT CODE: Safe verification of cookie file creation
+          echo "✅ Success: Cookies file created safely at $RUNNER_TEMP/cookies.txt"
+          echo "📊 File metrics -> Lines: $(wc -l < "$RUNNER_TEMP/cookies.txt") | Size: $(wc -c < "$RUNNER_TEMP/cookies.txt") bytes"
+      
       - name: Create archive and capture URL (with YouTube / yt-dlp enabled)
         env:
-         URLS_INPUT: ${{ inputs.urls }}
+            URLS_INPUT: ${{ inputs.urls }}
         run: |
-         mkdir -p "$GITHUB_WORKSPACE/archive"
-    
-         # initialize collection (creates /data layout)
-         docker run --rm \
-           -v "$GITHUB_WORKSPACE/archive:/data" \
-           my-archivebox \
-           init
-           
-         echo "URLs input:"
-         echo "$URLS_INPUT"
-         
-         # normalize input: replace commas with newlines, remove empty lines, then add each URL
-         echo "$URLS_INPUT" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | while IFS= read -r url; do
-           url="$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-           if [ -z "$url" ]; then
-             continue
-           fi
-           echo "Adding: $url"
-           
-           # run add with cookies mounted, yt-dlp enabled, and remote patch variables.
-           docker run --rm \
-             -v "$GITHUB_WORKSPACE/archive:/data" \
-             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-             -e YTDLP_ENABLED=true \
-             -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-             -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
-             my-archivebox \
-             add "$url"
-         done
+            mkdir -p "$GITHUB_WORKSPACE/archive"
+        
+            # initialize collection (creates /data layout)
+            docker run --rm \
+              -v "$GITHUB_WORKSPACE/archive:/data" \
+              my-archivebox \
+              init
+              
+            echo "URLs input:"
+            echo "$URLS_INPUT"
+            
+            # normalize input: replace commas with newlines, remove empty lines, then add each URL
+            echo "$URLS_INPUT" | tr ',' '\n' | sed '/^[[:space:]]*$/d' | while IFS= read -r url; do
+              url="$(echo "$url" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+              if [ -z "$url" ]; then
+                continue
+              fi
+              echo "Adding: $url"
+              
+              # run add with cookies mounted, yt-dlp enabled, and remote patch variables.
+              docker run --rm \
+                -v "$GITHUB_WORKSPACE/archive:/data" \
+                -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+                -e YTDLP_ENABLED=true \
+                -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+                -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
+                my-archivebox \
+                add "$url"
+            done
+
 
 
       - name: Remove temporary cookies
