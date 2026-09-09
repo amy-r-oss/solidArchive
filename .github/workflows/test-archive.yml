@@ -42,7 +42,7 @@ jobs:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
-          chmod 600 "$RUNNER_TEMP/cookies.txt"
+          chmod 644 "$RUNNER_TEMP/cookies.txt"
 
       - name: Run ArchiveBox
         run: |
