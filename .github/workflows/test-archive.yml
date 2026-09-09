@@ -75,14 +75,23 @@ jobs:
               
               # run add with cookies mounted, yt-dlp enabled, and remote patch variables.
               docker run --rm \
-                -v "$GITHUB_WORKSPACE/archive:/data" \
-                -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-                -e YTDLP_ENABLED=true \
-                -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-                -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
-                my-archivebox \
-                add "$url"
-            done
+              -v "$GITHUB_WORKSPACE/archive:/data" \
+              -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+              -e YTDLP_ENABLED=true \
+              -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+              -e MEDIA_MAX_SIZE=2000m \
+              -e TIMEOUT=300 \
+              -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github", "--verbose"]' \
+              my-archivebox \
+              add "$url"
+            #     -v "$GITHUB_WORKSPACE/archive:/data" \
+            #     -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            #     -e YTDLP_ENABLED=true \
+            #     -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            #     -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
+            #     my-archivebox \
+            #     add "$url"
+            # done
 
 
 
