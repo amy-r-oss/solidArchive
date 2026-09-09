@@ -53,6 +53,13 @@ jobs:
           # 🐳 2. PASS COOKIES TO DOCKER CONTAINER
           # -v mounts the file into a temporary data path inside the docker sandbox
           # -e tells ArchiveBox's yt-dlp config exactly where to look for those cookies
+          
+          echo "Checking cookie file inside Docker..."
+          docker run --rm \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            my-archivebox \
+            sh -c 'ls -l /tmp/cookies.txt && wc -c /tmp/cookies.txt'
+            
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
