@@ -43,7 +43,18 @@ jobs:
         run: |
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
           chmod 644 "$RUNNER_TEMP/cookies.txt"
-
+          
+      - name: Test yt-dlp cookies directly
+        run: |
+          docker run --rm \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            my-archivebox \
+            yt-dlp \
+            --cookies /tmp/cookies.txt \
+            --skip-download \
+            --print "%(title)s" \
+            "https://youtu.be/tzcamFb21Ro"
+            
       - name: Run ArchiveBox
         run: |
           docker run --rm \
