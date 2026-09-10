@@ -45,32 +45,41 @@ jobs:
           fi
 
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
-          chmod 600 "$RUNNER_TEMP/cookies.txt"
+          chmod 644 "$RUNNER_TEMP/cookies.txt"
 
 
       # 👇 ADD THIS ENTIRE STEP HERE
-
-      - name: Test YouTube cookies directly
+      - name: Inspect ArchiveBox Docker dependencies
         run: |
-          echo "Testing whether yt-dlp inside the ArchiveBox container can read the cookies..."
-
           docker run --rm \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
             my-archivebox \
             sh -c '
-              echo "Cookie file:"
+              echo "=== USER ==="
+              id
+
+              echo "=== COOKIE FILE ==="
               ls -l /tmp/cookies.txt
-              echo "Cookie file size:"
-              wc -c /tmp/cookies.txt
 
-              echo "Testing yt-dlp..."
-              yt-dlp \
-                --cookies /tmp/cookies.txt \
-                --skip-download \
-                --print "%(title)s" \
-                "https://youtu.be/tzcamFb21Ro"
+              echo "=== COOKIE SIZE ==="
+              wc -c /tmp/cookies.txt || true
+
+              echo "=== PATH ==="
+              echo "$PATH"
+
+              echo "=== YT-DLP LOCATIONS ==="
+              command -v yt-dlp || true
+              find / -type f -name "yt-dlp" 2>/dev/null | head -20
+
+              echo "=== PYTHON ==="
+              python --version 2>/dev/null || true
+
+              echo "=== YT-DLP PYTHON MODULE ==="
+              python -m yt_dlp --version 2>/dev/null || true
+
+              echo "=== ARCHIVEBOX ==="
+              archivebox version 2>/dev/null || true
             '
-
 
       - name: Create archive and capture URL (with YouTube / yt-dlp enabled)
         env:
