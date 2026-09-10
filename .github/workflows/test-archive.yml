@@ -116,6 +116,7 @@ jobs:
               chmod 644 /tmp/cookies.txt &&
               archivebox add "'"$url"'"
             '
+          done
             #   -v "$GITHUB_WORKSPACE/archive:/data" \
             #   -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
             #   -e YTDLP_ENABLED=true \
@@ -123,8 +124,7 @@ jobs:
             #   -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
             #   my-archivebox \
             #   add "$url"
-            docker run --rm \
-          done
+            
 
       - name: Remove temporary cookies
         if: always()
