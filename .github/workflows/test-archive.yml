@@ -43,17 +43,6 @@ jobs:
         run: |
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
           chmod 644 "$RUNNER_TEMP/cookies.txt"
-          
-      - name: Test yt-dlp cookies directly
-        run: |
-          docker run --rm \
-            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            my-archivebox \
-            yt-dlp \
-            --cookies /tmp/cookies.txt \
-            --skip-download \
-            --print "%(title)s" \
-            "https://youtu.be/tzcamFb21Ro"
             
       - name: Run ArchiveBox
         run: |
@@ -77,6 +66,17 @@ jobs:
             -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
             my-archivebox \
             add "${{ inputs.url }}"
+
+      - name: Test yt-dlp cookies directly
+        run: |
+          docker run --rm \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            my-archivebox \
+            yt-dlp \
+            --cookies /tmp/cookies.txt \
+            --skip-download \
+            --print "%(title)s" \
+            "https://youtu.be/tzcamFb21Ro"
       - name: Exact ArchiveBox Static Export Method
         run: |
           # Set BASE_URL before exporting
