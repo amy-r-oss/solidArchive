@@ -80,7 +80,25 @@ jobs:
               echo "=== ARCHIVEBOX ==="
               archivebox version 2>/dev/null || true
             '
+      - name: Direct yt-dlp YouTube test
+        run: |
+          docker run --rm \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/source-cookies.txt:ro" \
+            my-archivebox \
+            sh -c '
+              cp /tmp/source-cookies.txt /tmp/cookies.txt &&
+              chmod 644 /tmp/cookies.txt &&
 
+              echo "=== yt-dlp version ==="
+              /opt/archivebox/lib/uv/venv/bin/yt-dlp --version
+
+              echo "=== Testing YouTube ==="
+              /opt/archivebox/lib/uv/venv/bin/yt-dlp \
+                --cookies /tmp/cookies.txt \
+                --remote-components ejs:github \
+                --skip-download \
+                "https://www.youtube.com/watch?v=tzcamFb21Ro"
+            '
       - name: Create archive and capture URL (with YouTube / yt-dlp enabled)
         env:
           URLS_INPUT: ${{ inputs.urls }}
