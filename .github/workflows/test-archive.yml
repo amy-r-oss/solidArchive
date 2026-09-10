@@ -105,13 +105,25 @@ jobs:
             echo "Adding: $url"
 
             docker run --rm \
-              -v "$GITHUB_WORKSPACE/archive:/data" \
-              -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-              -e YTDLP_ENABLED=true \
-              -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
-              -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
-              my-archivebox \
-              add "$url"
+            -v "$GITHUB_WORKSPACE/archive:/data" \
+            -v "$RUNNER_TEMP/cookies.txt:/tmp/source-cookies.txt:ro" \
+            -e YTDLP_ENABLED=true \
+            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
+            my-archivebox \
+            sh -c '
+              cp /tmp/source-cookies.txt /tmp/cookies.txt &&
+              chmod 644 /tmp/cookies.txt &&
+              archivebox add "'"$url"'"
+            '
+            #   -v "$GITHUB_WORKSPACE/archive:/data" \
+            #   -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+            #   -e YTDLP_ENABLED=true \
+            #   -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            #   -e 'YTDLP_ARGS_EXTRA=["--remote-components=ejs:github"]' \
+            #   my-archivebox \
+            #   add "$url"
+            docker run --rm \
           done
 
       - name: Remove temporary cookies
