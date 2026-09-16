@@ -42,20 +42,20 @@ jobs:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           printf '%s\n' "$YOUTUBE_COOKIES" > "$RUNNER_TEMP/cookies.txt"
-          chmod 600 "$RUNNER_TEMP/cookies.txt"
-      - name: Direct yt-dlp YouTube test
-        run: |
-          docker run --rm \
-            -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            my-archivebox \
-            sh -c '
-              /opt/archivebox/lib/uv/venv/bin/yt-dlp \
-                --cookies /tmp/cookies.txt \
-                --verbose \
-                --remote-components ejs:github \
-                --skip-download \
-                "https://www.youtube.com/watch?v=tzcamFb21Ro"
-            '
+      #     chmod 600 "$RUNNER_TEMP/cookies.txt"
+      # - name: Direct yt-dlp YouTube test
+      #   run: |
+      #     docker run --rm \
+      #       -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+      #       my-archivebox \
+      #       sh -c '
+      #         /opt/archivebox/lib/uv/venv/bin/yt-dlp \
+      #           --cookies /tmp/cookies.txt \
+      #           --verbose \
+      #           --remote-components ejs:github \
+      #           --skip-download \
+      #           "https://www.youtube.com/watch?v=tzcamFb21Ro"
+      #       '
       - name: Run ArchiveBox
         run: |
           docker run --rm \
@@ -68,9 +68,12 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
-            my-archivebox \
-            add "${{ inputs.url }}"
+            --cookies /tmp/cookies.txt \
+            --verbose \
+            --remote-components ejs:github \
+            # -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
+            # my-archivebox \
+            # add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
         run: |
           # Set BASE_URL before exporting
