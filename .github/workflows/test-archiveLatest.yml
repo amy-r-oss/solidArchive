@@ -62,18 +62,28 @@ jobs:
             -v "$GITHUB_WORKSPACE/archive:/data" \
             my-archivebox \
             init --install
-          # 🐳 2. PASS COOKIES TO DOCKER CONTAINER
-          # -v mounts the file into a temporary data path inside the docker sandbox
-          # -e tells ArchiveBox's yt-dlp config exactly where to look for those cookies
+      
           docker run --rm \
             -v "$GITHUB_WORKSPACE/archive:/data" \
             -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
-            --cookies /tmp/cookies.txt \
-            --verbose \
-            --remote-components ejs:github \
-            # -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
-            # my-archivebox \
-            # add "${{ inputs.url }}"
+            -e YTDLP_ENABLED=true \
+            -e YTDLP_COOKIES_FILE=/tmp/cookies.txt \
+            -e 'YTDLP_ARGS_EXTRA=["--verbose","--remote-components=ejs:github"]' \
+            my-archivebox \
+            add "${{ inputs.url }}"
+          # docker run --rm \
+          #   -v "$GITHUB_WORKSPACE/archive:/data" \
+          #   my-archivebox \
+          #   init --install
+          # # 🐳 2. PASS COOKIES TO DOCKER CONTAINER
+          # # -v mounts the file into a temporary data path inside the docker sandbox
+          # # -e tells ArchiveBox's yt-dlp config exactly where to look for those cookies
+          # docker run --rm \
+          #   -v "$GITHUB_WORKSPACE/archive:/data" \
+          #   -v "$RUNNER_TEMP/cookies.txt:/tmp/cookies.txt:ro" \
+          #   -e YOUTUBE_DL_ARGS="--cookies /tmp/cookies.txt" \
+          #   my-archivebox \
+          #   add "${{ inputs.url }}"
       - name: Exact ArchiveBox Static Export Method
         run: |
           # Set BASE_URL before exporting
