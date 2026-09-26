@@ -1,5 +1,5 @@
 name: Test Archive--
-
+# requires PO token automated setup or vpn to get videos else it was all working
 on:
   workflow_dispatch:
     inputs:
