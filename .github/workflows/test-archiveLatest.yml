@@ -31,6 +31,23 @@ jobs:
       - name: Build ArchiveBox from this source
         run: |
           docker build -t my-archivebox .
+
+      - name: Inspect yt-dlp and PO Token support
+        run: |
+          docker run --rm my-archivebox sh -c '
+            echo "=== yt-dlp ==="
+            command -v yt-dlp || true
+            yt-dlp --version || true
+      
+            echo "=== yt-dlp Python package ==="
+            python -m yt_dlp --version || true
+      
+            echo "=== PO token related files ==="
+            find /opt/archivebox /venv -iname "*po*token*" -o -iname "*pot*" 2>/dev/null | head -100
+      
+            echo "=== yt-dlp package location ==="
+            python -c "import yt_dlp; print(yt_dlp.__file__)" || true
+          '
       - name: Create archive directories
         run: |
           mkdir -p "$GITHUB_WORKSPACE/archive"
